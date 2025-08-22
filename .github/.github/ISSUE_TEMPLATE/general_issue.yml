@@ -1,0 +1,57 @@
+name: "📌 일반 이슈"
+description: "이슈를 생성할 때 사용하세요."
+title: "[Issue] "
+labels: []
+assignees: []
+body:
+  - type: textarea
+    id: current
+    attributes:
+      label: "현재 상황"
+      description: "현재 발생한 문제나 개선이 필요한 상황을 설명해주세요."
+      placeholder: "- 어떤 상황에서 문제가 발생했나요?\n- 영향 범위는 어디까지인가요?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: "목표"
+      description: "이슈를 통해 달성하고자 하는 목표를 설명해주세요."
+      placeholder: "- 달성 목표\n- 완료 기준(Definition of Done)"
+    validations:
+      required: true
+
+  # 체크리스트를 작성자가 직접 추가/편집할 수 있도록 textarea + markdown 렌더링 사용
+  - type: textarea
+    id: tasks
+    attributes:
+      label: "작업 내용(체크리스트)"
+      description: "필요한 만큼 항목을 추가/삭제하세요. ' - [ ] ' 형식으로 작성하면 체크박스로 렌더링됩니다."
+      render: markdown
+      value: |
+        - [ ] 작업 1
+        - [ ] 작업 2
+        - [ ] 작업 3
+    validations:
+      required: false
+
+  # 이미지 첨부는 textarea에 드래그&드롭/붙여넣기로 가능
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: "스크린샷 / 첨부"
+      description: "여기에 이미지를 드래그&드롭하거나 붙여넣기 하세요. 필요 시 설명도 함께 적어주세요."
+      render: markdown
+      placeholder: "이미지 또는 에러 로그를 첨부하세요."
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: "참고자료"
+      description: "관련 문서나 링크를 첨부해주세요."
+      placeholder: "- 문서/링크 1\n- 문서/링크 2"
+    validations:
+      required: false
