@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  backend:
+    # './backend' 폴더에 있는 Dockerfile을 사용하여 이미지를 빌드합니다.
+    build:
+      context: ./backend
+      args:
+        # .env 파일에서 OPENAI_API_KEY 값을 읽어 빌드 시 주입합니다.
+        OPENAI_API_KEY: ${OPENAI_API_KEY}
+    
+    # 컨테이너의 이름을 'chatbot_backend'로 지정합니다.
+    container_name: chatbot_backend
+    
+    # 항상 컨테이너가 재시작되도록 설정합니다.
+    restart: always
+    
+    # 로컬 PC의 8000번 포트와 컨테이너의 8000번 포트를 연결합니다.
+    ports:
+      - "8000:8000"
