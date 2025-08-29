@@ -1,6 +1,6 @@
 # /docker-compose.yml (프로젝트 최상위 경로)
 
-version: '3.8'
+version: '3.11.9'
 
 services:
   backend:
