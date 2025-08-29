@@ -1,3 +1,36 @@
+# import os
+# import json
+# import re
+# from typing import TypedDict, List, Optional, Dict
+# import sys
+
+# # Pydantic 및 LangChain 호환성을 위한 임포트
+# from pydantic import BaseModel, Field, PrivateAttr
+
+# # LangChain 및 관련 라이브러리 임포트
+# from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+# from langchain_community.document_loaders.base import BaseLoader
+# from langchain_community.vectorstores import Chroma
+# from langchain.retrievers import EnsembleRetriever, ContextualCompressionRetriever
+# from langchain_community.retrievers import BM25Retriever
+# from langchain_core.documents import Document
+# from langchain_core.prompts import ChatPromptTemplate
+# from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
+
+# # FlashRank 임포트
+# try:
+#     from flashrank import Ranker, RerankRequest
+#     from langchain.retrievers.document_compressors.base import BaseDocumentCompressor
+#     from langchain_core.callbacks.manager import Callbacks
+# except ImportError:
+#     print("FlashRank 또는 관련 모듈을 찾을 수 없습니다.")
+#     BaseDocumentCompressor = object
+#     Ranker = None
+
+# # --- 설정 및 모델 정의 ---
+# project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# sys.path.insert(0, project_root)
+
 import os
 import json
 import re
@@ -17,19 +50,29 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 
-# FlashRank 임포트
+# --- 여기부터 수정된 부분입니다 ---
+
+# LangChain 업데이트에 따라 변경된 경로로 수정하고, try 블록 바깥으로 이동시켰습니다.
+# 이렇게 하면 flashrank 설치 여부와 관계없이 NameError가 발생하지 않습니다.
+from langchain_core.documents.compressor import BaseDocumentCompressor
+from langchain_core.callbacks.base import Callbacks
+
+# FlashRank 임포트 (FlashRank 관련 부분만 try-except로 감쌉니다)
 try:
     from flashrank import Ranker, RerankRequest
-    from langchain.retrievers.document_compressors.base import BaseDocumentCompressor
-    from langchain_core.callbacks.manager import Callbacks
 except ImportError:
-    print("FlashRank 또는 관련 모듈을 찾을 수 없습니다.")
-    BaseDocumentCompressor = object
+    print("경고: FlashRank 또는 관련 모듈을 찾을 수 없습니다. 리랭킹(re-ranking) 기능이 비활성화됩니다.")
+    # Ranker만 None으로 설정하여 프로그램이 멈추지 않고 계속 실행되도록 합니다.
     Ranker = None
+    # RerankRequest는 Ranker가 None일 때 사용되지 않으므로 정의하지 않아도 괜찮습니다.
+
+# --- 여기까지 수정된 부분입니다 ---
+
 
 # --- 설정 및 모델 정의 ---
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
+# (이하 코드 동일)
 
 MAX_CORRECTION_ATTEMPTS = 3
 
