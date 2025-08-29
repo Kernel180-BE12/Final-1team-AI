@@ -221,7 +221,7 @@ def initialize_system():
     global llm, retrievers, approved_templates, rejected_templates
     if llm is not None:
         return
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.2)
+    llm = ChatOpenAI(model="gpt-5", temperature=0.2)
     data_dir = os.path.join(project_root, 'data')
     approved_templates = load_line_by_line(os.path.join(data_dir, "approved_templates.txt"))
     rejected_templates = load_by_separator(os.path.join(data_dir, "rejected_templates.txt"))

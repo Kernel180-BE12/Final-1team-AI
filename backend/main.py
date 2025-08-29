@@ -13,7 +13,7 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # 1단계에서 이름을 변경한 챗봇 로직 파일을 임포트합니다.
-from src.chatbot_logic import initialize_system, process_chat_message
+from backend.chatbot_logic import initialize_system, process_chat_message
 
 # --- FastAPI 앱 생성 및 설정 ---
 app = FastAPI()
