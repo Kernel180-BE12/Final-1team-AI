@@ -1,4 +1,4 @@
-name: Backend CI/CD Pipeline
+name: AI CI/CD Pipeline (GHCR with SCP)
 
 on:
   push:
@@ -9,45 +9,55 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ... (Checkout, Login to Docker Hub, Build and push Backend image 단계는 동일) ...
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Backend image
-        uses: docker/build-push-action@v4
+      - name: Build and push to GHCR
+        uses: docker/build-push-action@v5
         with:
           context: ./backend
           file: ./backend/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/chatbot-backend:latest
-          build-args: |
-            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          tags: ghcr.io/${{ github.repository }}/chatbot-backend:latest
 
-      # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 이 부분이 수정됩니다 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+      - name: Copy docker-compose.yml to Server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "docker-compose.yml"
+          target: "/home/jober/Final-1team-AI"
+
       - name: Deploy to Server
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            # 1. 새 프로젝트 디렉토리로 이동합니다.
+            # 1. 서버에서 GHCR에 로그인
+            echo ${{ secrets.CR_PAT }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # 2. 배포 디렉토리로 이동
             cd /home/jober/Final-1team-AI
 
-            # 2. 서버의 docker-compose.yml에 명시된 이미지 이름 부분을 
-            #    최신 이미지를 가리키도록 업데이트합니다. (선택적이지만 권장)
-            #    'your-dockerhub-username' 부분을 실제 Docker Hub ID로 바꿔주세요.
-            sed -i 's|image: .*|image: ${{ secrets.DOCKERHUB_USERNAME }}/chatbot-backend:latest|g' docker-compose.yml
-
-            # 3. Docker Hub에서 최신 이미지를 받습니다.
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/chatbot-backend:latest
-
-            # 4. docker-compose를 사용하여 새 버전의 컨테이너를 실행합니다.
-            #    .env 파일과 docker-compose.yml을 읽어 백그라운드에서 실행합니다.
-            docker-compose up -d
+            # 3. [수정 완료] 복사된 docker-compose.yml 파일의 이미지 주소를 실제 값으로 변경
+            # docker-compose.yml에 있는 'GITHUB_REPOSITORY_PLACEHOLDER'를 찾아서 바꿉니다.
+            sed -i 's|GITHUB_REPOSITORY_PLACEHOLDER|${{ github.repository }}|g' docker-compose.yml
+            
+            # 4. 최신 이미지를 pull
+            docker pull ghcr.io/${{ github.repository }}/chatbot-backend:latest
+            
+            # 5. docker-compose로 서비스 재시작
+            docker-compose up -d --force-recreate --remove-orphans
+            
+            # 6. 불필요한 이미지 정리
+            docker image prune -f
