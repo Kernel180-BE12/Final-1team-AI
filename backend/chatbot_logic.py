@@ -314,6 +314,37 @@ def initialize_system():
     except Exception as e:
         print(f"시스템 초기화 실패: {e}")
         raise e
+    
+def fill_template_with_request(template_structure: str, user_request: str) -> str:
+    """
+    주어진 템플릿 구조(틀)와 사용자 요청을 바탕으로, LLM을 사용하여 변수를 채워넣은 완성된 템플릿을 생성합니다.
+    특히, #{제목}과 같은 요약 변수는 사용자 요청의 핵심을 파악하여 생성합니다.
+    """
+    prompt = ChatPromptTemplate.from_template(
+        """당신은 지시를 매우 잘 따르는 AI 어시스턴트입니다.
+        주어진 '템플릿 구조'의 변수(`#{{...}}`)들을 '사용자 요청'에서 찾을 수 있는 정보로 채워넣어, 완성된 알림톡 메시지를 만드세요.
+
+        # 템플릿 구조:
+        {template_structure}
+
+        # 사용자 요청:
+        {user_request}
+
+        # 지시사항:
+        1. '사용자 요청'의 핵심 내용을 파악하여 '템플릿 구조'의 각 변수에 가장 적절한 값을 채워넣으세요.
+        2. 특히 `#{{제목}}`이나 `#{{요약}}`과 같은 변수는, 사용자 요청의 핵심 내용을 한 문장으로 요약하여 채워넣어야 합니다. (예: "주간 회의 참석 안내", "3월 급여명세서 발송")
+        3. 만약 '사용자 요청'에서 특정 변수에 대한 정보를 찾을 수 없다면, 해당 변수는 `#{{변수명}}` 형태로 그대로 남겨두세요.
+        4. 최종 결과물은 오직 완성된 템플릿 텍스트여야 합니다. 다른 설명이나 주석은 절대 추가하지 마세요.
+
+        # 완성된 템플릿:
+        """
+    )
+    chain = prompt | llm | StrOutputParser()
+    filled_template = chain.invoke({
+        "template_structure": template_structure,
+        "user_request": user_request
+    })
+    return filled_template.strip()
 
 def process_chat_message(message: str, state: dict) -> dict:
     try:
@@ -362,10 +393,8 @@ def process_chat_message(message: str, state: dict) -> dict:
                     try:
                         template_idx = int(message.split(' ')[1]) - 1
                         if 0 <= template_idx < len(state.get('recommended_templates', [])):
-                            selected_template = state['recommended_templates'][template_idx]
-                            state['template_draft'] = selected_template
-                            state['selected_style'] = detect_template_style(selected_template)
-                            next_step = 'validation'
+                            state['selected_template_structure'] = state['recommended_templates'][template_idx]
+                            next_step = 'fill_template'
                         else:
                             return {'message': '잘못된 템플릿 번호입니다. 다시 선택해주세요.', 'state': state}
                     except (ValueError, IndexError):
@@ -375,6 +404,16 @@ def process_chat_message(message: str, state: dict) -> dict:
                     next_step = 'ask_for_style'
                 else:
                     return {'message': '알 수 없는 선택입니다. 다시 시도해주세요.', 'state': state}
+
+            elif current_step == 'fill_template':
+                print("사용자 요청으로 템플릿 채우는 중...")
+                filled_draft = fill_template_with_request(
+                    template_structure=state['selected_template_structure'],
+                    user_request=state['original_request']
+                )
+                state['template_draft'] = filled_draft
+                state['selected_style'] = detect_template_style(filled_draft)
+                next_step = 'validation'
 
             elif current_step == 'ask_for_style':
                 options = ['기본형', '이미지형', '아이템리스트형']
