@@ -37,7 +37,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)
+ )
 
 # --- API 요청/응답 모델 정의 ---
 class ChatRequest(BaseModel):
@@ -67,7 +67,7 @@ async def chat(request: ChatRequest) -> Dict:
     """
     try:
         session_state = request.state
-        # 세션 상태가 비어있을 경우 초기화
+        # 세션 상태가 비어있을 경우 초기화 (chatbot_logic에서 이미 처리하지만, 안전장치로 유지)
         if not session_state:
             session_state = {
                 'step': 'initial',
@@ -78,20 +78,32 @@ async def chat(request: ChatRequest) -> Dict:
                 'validation_result': None,
                 'correction_attempts': 0
             }
-        
+
+        # process_chat_message가 프론트엔드에 필요한 모든 데이터를 포함하여 반환
         response_data = process_chat_message(request.message, session_state)
-        
-        # 프론트엔드가 필요로 하는 모든 키를 포함하여 응답을 구성합니다.
-        return {
+
+        # --- 수정된 부분 ---
+        # chatbot_logic에서 반환된 데이터를 그대로 사용하여 응답을 구성합니다.
+        # 이렇게 하면 구조가 더 단순해지고, 키 누락 등의 실수를 방지할 수 있습니다.
+        final_response = {
             'success': True,
             'response': response_data.get('message', ''),
             'state': response_data.get('state', {}),
             'options': response_data.get('options', []),
             'template': response_data.get('template', ''),
-            'html_preview': response_data.get('html_preview', ''),
             'editable_variables': response_data.get('editable_variables', {}),
+            'template_data': response_data.get('template_data'),
+            'templates_data': response_data.get('templates_data'),
             'step': response_data.get('state', {}).get('step', 'initial')
         }
+        
+        # html_preview 키는 더 이상 사용하지 않으므로 응답에 포함하지 않습니다.
+        if 'html_preview' in final_response:
+            del final_response['html_preview']
+
+        return final_response
+        # --------------------
+
     except Exception as e:
         print(f"API 처리 중 오류 발생: {e}")
         traceback.print_exc()
@@ -115,4 +127,3 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
