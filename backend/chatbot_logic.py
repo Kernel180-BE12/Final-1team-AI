@@ -28,11 +28,6 @@ except ImportError:
     Ranker = None
 
 # --- 설정 및 모델 정의 ---
-# Docker 컨테이너 내부 경로를 고려하여 경로 설정 방식을 단순화합니다.
-# Dockerfile의 WORKDIR이 /app이므로, 상대 경로를 사용하면 됩니다.
-# project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-# sys.path.insert(0, project_root)
-
 MAX_CORRECTION_ATTEMPTS = 3
 
 class CustomRuleLoader(BaseLoader):
@@ -79,7 +74,6 @@ class TemplateAnalysisResult(BaseModel):
     reason: str = Field(description="상세한 판단 이유")
     evidence: Optional[str] = Field(None, description="판단 근거 규칙들의 rule_id")
     suggestion: Optional[str] = Field(None, description="개선 제안")
-    revised_template: Optional[str] = Field(None, description="수정된 템플릿")
 
 class FlashRankRerank(BaseDocumentCompressor):
     _ranker: Ranker = PrivateAttr()
@@ -120,6 +114,12 @@ class ParameterizedResult(BaseModel):
     parameterized_template: str = Field(description="특정 정보가 #{변수명}으로 대체된 최종 템플릿")
     variables: List[Variable] = Field(description="추출된 변수들의 목록")
 
+class StructuredTemplate(BaseModel):
+    title: str = Field(description="템플릿의 제목 또는 첫 문장")
+    body: str = Field(description="제목과 버튼 텍스트를 제외한 템플릿의 핵심 본문 내용. 줄바꿈이 있다면 \\n으로 유지해주세요.")
+    button_text: str = Field(description="사용자가 클릭할 버튼에 표시될 텍스트. 보통 마지막 줄에 위치합니다.")
+    image_url: Optional[str] = Field(None, description="템플릿에 포함될 이미지의 URL. 이미지가 없는 경우 null입니다.")
+
 # --- 전역 변수 및 헬퍼 함수 ---
 llm = None
 retrievers = {}
@@ -143,31 +143,69 @@ def load_by_separator(file_path: str, separator: str = '---') -> List[str]:
     except FileNotFoundError:
         return []
 
-def render_final_template(template_string: str) -> str:
-    lines = [line.strip() for line in template_string.strip().split('\n') if line.strip()]
-    if not lines:
-        return "<span>미리보기를 생성할 템플릿이 없습니다.</span>"
-    title = lines[0]
-    button_text = lines[-1]
-    body_lines = []
-    note_lines = []
-    for line in lines[1:-1]:
-        if line.startswith('*'):
-            note_lines.append(line)
-        else:
-            body_lines.append(line)
-    body = "<br>".join(body_lines)
-    note = "<br>".join(note_lines)
-    body = re.sub(r'(#{\w+})', r'<span class="placeholder">\1</span>', body)
+def structure_template_with_llm(template_string: str) -> StructuredTemplate:
+    """LLM을 사용해 템플릿 텍스트를 구조화된 객체로 변환합니다."""
+    parser = JsonOutputParser(pydantic_object=StructuredTemplate)
+
+    prompt = ChatPromptTemplate.from_template(
+        """당신은 주어진 텍스트를 분석하여 핵심 구성 요소로 구조화하는 전문가입니다.
+        # 지시사항:
+        1. 텍스트의 첫 번째 문장이나 줄을 'title'로 추출합니다.
+        2. 텍스트의 가장 마지막 줄이나 문구를 'button_text'로 추출합니다.
+        3. 제목과 버튼 텍스트를 제외한 나머지 모든 내용을 'body'로 추출합니다.
+        4. 만약 텍스트 내용이 이미지를 암시하거나 설명한다면(예: '(이미지:...)'), 해당 이미지를 대표할 수 있는 URL을 'image_url' 필드에 '#{{이미지주제}}_이미지_URL' 형식의 변수로 생성하세요. (예: '#{{신발}}_이미지_URL'). 이미지가 언급되지 않으면 이 필드는 null입니다.
+        5. 최종 결과를 지정된 JSON 형식으로만 출력해야 합니다.
+
+        # 원본 텍스트:
+        {raw_text}
+
+        # 출력 형식 (JSON):
+        {format_instructions}
+        """
+    )
+
+    chain = prompt | llm | parser
+    try:
+        structured_data_dict = chain.invoke({
+            "raw_text": template_string,
+            "format_instructions": parser.get_format_instructions()
+        })
+        return StructuredTemplate(**structured_data_dict)
+
+    except Exception as e:
+        print(f"Error during structuring template: {e}")
+        return StructuredTemplate(
+            title=template_string.split('\n')[0].strip(),
+            body=template_string,
+            button_text="확인",
+            image_url=None
+        )
+    
+
+def render_template_from_structured(data: StructuredTemplate) -> str:
+    """구조화된 데이터를 받아 안전하게 HTML 미리보기를 생성합니다."""
+    
+    body_html = data.body.replace('\n', '<br>')
+    body_html = re.sub(r'(#{\w+})', r'<span class="placeholder">\1</span>', body_html)
+    
+    # image_url 값이 있으면 img 태그를 생성합니다.
+    image_html = ""
+    if data.image_url:
+        # 실제 서비스에서는 이 변수를 실제 이미지 주소로 교체해야 합니다.
+        # 여기서는 이해를 돕기 위해 텍스트가 포함된 placeholder 이미지를 사용합니다.
+        image_text = data.image_url.replace("#{", "").replace("}_이미지_URL", "")
+        placeholder_url = f"https://via.placeholder.com/350x150.png?text={image_text}"
+        image_html = f'<img src="{placeholder_url}" alt="Template Image" style="width:100%; height:auto; display:block;">'
+
     html_output = f"""
     <div class="template-preview">
+        {image_html}
         <div class="header">알림톡 도착</div>
         <div class="content">
             <div class="icon">📄</div>
-            <h2 class="title">{title}</h2>
-            <div class="body-text">{body}</div>
-            <div class="note-text">{note}</div>
-            <div class="button-container"><span>{button_text}</span></div>
+            <h2 class="title">{data.title}</h2>
+            <div class="body-text">{body_html}</div>
+            <div class="button-container"><span>{data.button_text}</span></div>
         </div>
     </div>
     <style>
@@ -177,7 +215,6 @@ def render_final_template(template_string: str) -> str:
         .template-preview .icon {{ position: absolute; top: 25px; right: 20px; font-size: 36px; opacity: 0.5; }}
         .template-preview .title {{ font-size: 24px; font-weight: bold; margin: 0 0 20px; padding-right: 40px; color: #333; }}
         .template-preview .body-text {{ font-size: 15px; line-height: 1.6; color: #555; margin-bottom: 20px; }}
-        .template-preview .note-text {{ font-size: 13px; line-height: 1.5; color: #777; margin-bottom: 25px; }}
         .template-preview .placeholder {{ color: #007bff; font-weight: bold; }}
         .template-preview .button-container {{ background-color: #FFFFFF; border: 1px solid #d0d0d0; border-radius: 5px; text-align: center; padding: 12px 10px; font-size: 15px; font-weight: bold; color: #007bff; cursor: pointer; }}
     </style>
@@ -185,7 +222,6 @@ def render_final_template(template_string: str) -> str:
     return html_output
 
 def parameterize_template(template_string: str) -> Dict:
-    """템플릿을 매개변수화하는 함수 - 오류 처리 강화"""
     parser = JsonOutputParser(pydantic_object=ParameterizedResult)
     prompt = ChatPromptTemplate.from_template(
         """당신은 주어진 텍스트를 재사용 가능한 템플릿으로 변환하는 전문가입니다.
@@ -207,7 +243,6 @@ def parameterize_template(template_string: str) -> Dict:
             "original_text": template_string,
             "format_instructions": parser.get_format_instructions(),
         })
-        # 결과 검증 및 기본값 설정
         if not isinstance(result, dict):
             result = {"parameterized_template": template_string, "variables": []}
         if "parameterized_template" not in result:
@@ -226,15 +261,12 @@ def initialize_system():
         
     print("서버 시작: 시스템 초기화를 진행합니다...")
     try:
-        # Docker 컨테이너의 기본 경로인 /app을 기준으로 경로 설정
         data_dir = 'data'
         vector_db_path = "vector_db"
         
-        # llm 및 embeddings 초기화 (API 키는 환경변수에서 자동으로 읽어옴)
         llm = ChatOpenAI(model="gpt-4o", temperature=0.2)
         embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
         
-        # 데이터 로드
         approved_templates = load_line_by_line(os.path.join(data_dir, "approved_templates.txt"))
         rejected_templates = load_by_separator(os.path.join(data_dir, "rejected_templates.txt"))
         
@@ -243,13 +275,11 @@ def initialize_system():
         docs_whitelist = [Document(page_content=t) for t in approved_templates]
         docs_rejected = [Document(page_content=t) for t in rejected_templates]
         
-        # ChromaDB 클라이언트 설정
         from chromadb.config import Settings
         client_settings = Settings(anonymized_telemetry=False)
         
-        # DB 생성 헬퍼 함수
         def create_db(name, docs):
-            if docs: # 문서가 있을 때만 DB 생성
+            if docs:
                 return Chroma.from_documents(
                     docs, 
                     embeddings, 
@@ -257,23 +287,19 @@ def initialize_system():
                     persist_directory=vector_db_path, 
                     client_settings=client_settings
                 )
-            return None # 문서가 없으면 None 반환
+            return None
             
-        # DB 인스턴스 생성
         db_compliance = create_db("compliance_rules", docs_compliance)
         db_generation = create_db("generation_rules", docs_generation)
         db_whitelist = create_db("whitelist_templates", docs_whitelist)
         db_rejected = create_db("rejected_templates", docs_rejected)
         
-        # 리트리버 생성 헬퍼 함수
         def create_hybrid_retriever(vectorstore, docs):
-            # [수정] vectorstore가 None이면 리트리버를 생성하지 않고 None 반환
             if not vectorstore:
                 return None
             
             vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
             
-            # 문서가 있을 때만 BM25Retriever와 EnsembleRetriever를 구성
             if docs:
                 keyword_retriever = BM25Retriever.from_documents(docs)
                 keyword_retriever.k = 5
@@ -289,13 +315,11 @@ def initialize_system():
             
             return ensemble_retriever
 
-        # [수정] DB가 성공적으로 생성된 경우에만 리트리버를 등록
         retrievers['compliance'] = create_hybrid_retriever(db_compliance, docs_compliance)
         retrievers['generation'] = create_hybrid_retriever(db_generation, docs_generation)
         retrievers['whitelist'] = create_hybrid_retriever(db_whitelist, docs_whitelist)
         retrievers['rejected'] = create_hybrid_retriever(db_rejected, docs_rejected)
 
-        # [수정] 생성된 리트리버를 확인하는 로그 추가
         for name, retriever in retrievers.items():
             if retriever:
                 print(f"✅ '{name}' 리트리버가 성공적으로 생성되었습니다.")
@@ -306,19 +330,15 @@ def initialize_system():
 
     except Exception as e:
         print(f"시스템 초기화 실패: {e}")
-        # 초기화 실패 시, 앱이 계속 실행되지 않도록 예외를 다시 발생시킬 수 있습니다.
-        # 이는 컨테이너가 재시작되도록 유도하여 문제를 명확히 알립니다.
         raise e
 
 def process_chat_message(message: str, state: dict) -> dict:
-    """채팅 메시지 처리 - 오류 처리 강화"""
+    """채팅 메시지 처리 - 최종 수정 로직 적용"""
     try:
-        # [수정] 각 단계에서 필요한 리트리버가 있는지 확인
         if state['step'] == 'initial':
             state['original_request'] = message
             state['step'] = 'recommend_templates'
             
-            # whitelist 리트리버가 없을 경우 바로 신규 생성으로 이동
             if 'whitelist' not in retrievers or not retrievers['whitelist']:
                 print("🚨 경고: whitelist 리트리버가 없어 신규 생성으로 바로 진행합니다.")
                 state['step'] = 'select_style'
@@ -338,19 +358,33 @@ def process_chat_message(message: str, state: dict) -> dict:
                     'options': ['기본형', '이미지형', '아이템리스트형']
                 }
             
-            templates = [f"템플릿 {i+1}:\n{doc.page_content}" for i, doc in enumerate(similar_docs[:3])]
+            # --- [수정된 부분 1] ---
+            # 텍스트를 먼저 구조화하고, 그 다음에 HTML로 렌더링합니다.
+            html_previews = [render_template_from_structured(structure_template_with_llm(doc.page_content)) for doc in similar_docs[:3]]
+            # --- [수정 끝] ---
+            
             return {
-                'message': '요청하신 내용과 유사한 기존 템플릿을 찾았습니다:\n\n' + '\n\n'.join(templates) + '\n\n이 중에서 사용하실 템플릿을 선택하시거나, 새로운 템플릿 생성을 원하시면 "신규 생성"을 선택해주세요.',
+                'message': '요청하신 내용과 유사한 기존 템플릿을 찾았습니다:\n\n' + '해당 템플릿중에서 사용하실 템플릿을 선택하시거나, 새로운 템플릿 생성을 원하시면 "신규 생성"을 선택해주세요.',
                 'state': state,
                 'options': ['템플릿 1', '템플릿 2', '템플릿 3', '신규 생성'],
-                'templates': [doc.page_content for doc in similar_docs[:3]]
+                'templates': [doc.page_content for doc in similar_docs[:3]],
+                'html_previews': html_previews
             }
         
         elif state['step'] == 'recommend_templates':
             if message in ['템플릿 1', '템플릿 2', '템플릿 3']:
                 template_idx = int(message.split()[1]) - 1
+                if 'whitelist' not in retrievers or not retrievers['whitelist']:
+                    return {'message': '오류: 템플릿을 가져올 수 없습니다. 다시 시도해주세요.', 'state': {'step': 'initial'}}
+                
                 similar_docs = retrievers['whitelist'].invoke(state['original_request'])
-                state['template_draft'] = similar_docs[template_idx].page_content
+                if not similar_docs or len(similar_docs) <= template_idx:
+                    return {'message': '오류: 선택한 템플릿을 찾을 수 없습니다. 다시 시도해주세요.', 'state': {'step': 'initial'}}
+
+                state['selected_template'] = similar_docs[template_idx].page_content
+                state['step'] = 'generate_and_validate'
+                return process_chat_message(message, state)
+
             elif message == '신규 생성':
                 state['step'] = 'select_style'
                 return {
@@ -358,22 +392,40 @@ def process_chat_message(message: str, state: dict) -> dict:
                     'state': state,
                     'options': ['기본형', '이미지형', '아이템리스트형']
                 }
-            else: # 사용자가 직접 텍스트를 입력한 경우 (스타일 선택으로 바로 넘어감)
+            else:
                 state['step'] = 'select_style'
                 return process_chat_message(message, state)
 
         if state.get('step') == 'select_style':
             if message in ['기본형', '이미지형', '아이템리스트형']:
                 state['selected_style'] = message
-            else: # 기본 스타일을 fallback으로 사용
+            else:
                 state['selected_style'] = '기본형'
             
-            # 템플릿 생성 및 검증 로직 실행
             state['step'] = 'generate_and_validate'
             return process_chat_message(message, state)
 
         if state.get('step') == 'generate_and_validate':
-            template_draft = generate_template(state['original_request'], state.get('selected_style', '기본형'))
+            if 'selected_template' in state and state['selected_template']:
+                base_template = state['selected_template']
+                del state['selected_template']
+            else:
+                newly_generated = generate_template(
+                    state['original_request'], 
+                    state.get('selected_style', '기본형')
+                )
+                param_result = parameterize_template(newly_generated)
+                base_template = param_result.get('parameterized_template', newly_generated)
+                state['variables_info'] = param_result.get('variables', [])
+
+            state['base_template'] = base_template
+            
+            print("템플릿 내용을 채워 검증을 시작합니다.")
+            template_draft = fill_template_with_request(
+                template=base_template,
+                request=state['original_request']
+            )
+            
             state['template_draft'] = template_draft
             validation_result = validate_template(template_draft)
             state['validation_result'] = validation_result
@@ -381,27 +433,37 @@ def process_chat_message(message: str, state: dict) -> dict:
 
             if validation_result['status'] == 'accepted':
                 state['step'] = 'completed'
-                return process_chat_message(message, state) # 완료 단계로 이동
+                return process_chat_message(message, state)
             else:
                 state['step'] = 'correction'
                 return {
-                    'message': f'템플릿을 생성했지만 규정 위반이 발견되었습니다.\n\n문제점: {validation_result["reason"]}\n\n개선 제안: {validation_result["suggestion"]}\n\nAI가 자동으로 수정하겠습니다.',
+                    'message': f'템플릿을 생성했지만 규정 위반이 발견되었습니다.\n\n문제점: {validation_result["reason"]}\n\n개선 제안: {validation_result.get("suggestion", "없음")}\n\nAI가 자동으로 수정하겠습니다.',
                     'state': state
                 }
                 
         elif state['step'] == 'correction':
             if state['correction_attempts'] < MAX_CORRECTION_ATTEMPTS:
-                corrected_template = correct_template(state)
-                state['template_draft'] = corrected_template
+                corrected_base_template = correct_template(state)
                 state['correction_attempts'] += 1
-                validation_result = validate_template(corrected_template)
+                
+                validation_result = validate_template(corrected_base_template)
                 state["validation_result"] = validation_result
                 
                 if validation_result["status"] == "accepted":
+                    state['base_template'] = corrected_base_template
+                    
+                    print("AI가 수정한 템플릿에 내용을 다시 채웁니다.")
+                    final_draft = fill_template_with_request(
+                        template=corrected_base_template,
+                        request=state['original_request']
+                    )
+                    state['template_draft'] = final_draft
+                    
                     state["step"] = "completed"
-                    return process_chat_message(message, state) # 완료 단계로 이동
+                    return process_chat_message(message, state)
                 else:
-                    return process_chat_message(message, state) # 재귀 호출로 자동 수정 반복
+                    state['template_draft'] = corrected_base_template
+                    return process_chat_message(message, state)
             else:
                 state['step'] = 'manual_correction'
                 return {
@@ -415,12 +477,22 @@ def process_chat_message(message: str, state: dict) -> dict:
                 state['step'] = 'initial'
                 return {'message': '템플릿 생성을 포기했습니다. 새로운 요청을 입력해주세요.', 'state': {'step': 'initial'}}
             else:
-                state['template_draft'] = message
-                validation_result = validate_template(message)
+                user_corrected_template = message
+                validation_result = validate_template(user_corrected_template)
                 state['validation_result'] = validation_result
+
                 if validation_result['status'] == 'accepted':
+                    state['base_template'] = user_corrected_template
+                    
+                    print("사용자가 수정한 템플릿에 내용을 다시 채웁니다.")
+                    final_draft = fill_template_with_request(
+                        template=user_corrected_template,
+                        request=state['original_request']
+                    )
+                    state['template_draft'] = final_draft
+                    
                     state['step'] = 'completed'
-                    return process_chat_message(message, state) # 완료 단계로 이동
+                    return process_chat_message(message, state)
                 else:
                     return {
                         'message': f'🚨 수정하신 템플릿에도 여전히 문제가 있습니다.\n\n문제점: {validation_result["reason"]}\n\n다시 수정해주시거나 "포기하기"를 선택해주세요.',
@@ -429,29 +501,35 @@ def process_chat_message(message: str, state: dict) -> dict:
                     }
         
         elif state['step'] == 'completed':
-            final_template = state.get("template_draft", "")
-            html_preview = render_final_template(final_template)
-            parameterized_result = parameterize_template(final_template)
+            final_filled_template = state.get("template_draft", "")
             
-            # 안전한 변수 접근
-            parameterized_template = parameterized_result.get("parameterized_template", final_template)
-            variables = parameterized_result.get("variables", [])
+            # --- [수정된 부분 2] ---
+            # 1. 텍스트를 LLM을 이용해 '구조화된 객체'로 변환합니다.
+            structured_data = structure_template_with_llm(final_filled_template)
             
-            # editable_variables 구성
+            # 2. '구조화된 객체'를 HTML 생성 함수로 전달합니다.
+            html_preview = render_template_from_structured(structured_data)
+            # --- [수정 끝] ---
+            
+            base_template = state.get("base_template", final_filled_template)
+            variables = state.get('variables_info')
+            if variables is None:
+                param_result = parameterize_template(final_filled_template)
+                variables = param_result.get('variables', [])
+
             editable_variables = {
-                "parameterized_template": parameterized_template,
+                "parameterized_template": base_template,
                 "variables": variables
             } if variables else None
-            
+            state['step'] = 'initial'
             return {
                 'message': '✅ 템플릿이 성공적으로 생성되었습니다!',
                 'state': state,
-                'template': final_template,
+                'template': final_filled_template,
                 'html_preview': html_preview,
                 'editable_variables': editable_variables
             }
         
-        # 기본 fallback
         return {
             'message': '알 수 없는 상태입니다. 다시 시도해주세요.',
             'state': {'step': 'initial'}
@@ -464,10 +542,210 @@ def process_chat_message(message: str, state: dict) -> dict:
             'state': {'step': 'initial'}
         }
 
-def generate_template(request: str, style: str = "기본형") -> str:
-    """템플릿 생성 함수"""
+def fill_template_with_request(template: str, request: str) -> str:
+    print(f"템플릿 채우기 시작: 요청='{request}', 템플릿='{template}'")
+    
+    variables = re.findall(r'#\{(\w+)\}', template)
+    
+    if not variables:
+        print("템플릿에 채울 변수가 없어 그대로 반환합니다.")
+        return template
+
+    variable_names = ", ".join([f"`#{v}`" for v in variables])
+
+    prompt = ChatPromptTemplate.from_template(
+        """당신은 주어진 템플릿과 사용자의 구체적인 요청을 결합하여 완성된 메시지를 만드는 전문가입니다.
+        # 목표: 사용자의 요청사항을 분석하여, 주어진 템플릿의 각 변수(`#{{변수명}}`)에 가장 적합한 내용을 채워 넣어 완전한 메시지를 생성하세요.
+        # 주어진 템플릿:
+        ```{template}```
+        # 템플릿의 변수 목록: {variable_names}
+        # 사용자의 구체적인 요청: "{request}"
+        # 지시사항:
+        1. 사용자의 요청에서 각 변수에 해당하는 구체적인 정보를 정확히 추출하세요.
+        2. 템플릿의 원래 문구와 구조는 절대 변경하지 마세요.
+        3. 오직 변수(`#{{...}}`) 부분만 추출한 정보로 대체해야 합니다.
+        4. 최종적으로 완성된 템플릿 텍스트만 출력하고, 다른 어떤 설명도 덧붙이지 마세요.
+        # 완성된 템플릿:
+        """
+    )
+    
+    chain = prompt | llm | StrOutputParser()
+    
     try:
-        # [수정] generation 리트리버가 없을 경우 기본 프롬프트 사용
+        filled_template = chain.invoke({
+            "template": template,
+            "variable_names": variable_names,
+            "request": request
+        })
+        
+        # --- [수정된 부분] ---
+        # LLM 결과물 앞뒤의 공백과 인용부호('", `)를 모두 제거합니다.
+        cleaned_template = filled_template.strip().strip('"`')
+        # --- [수정 끝] ---
+
+        print(f"템플릿 채우기 완료: 결과='{cleaned_template}'")
+        return cleaned_template
+        
+    except Exception as e:
+        print(f"Error in fill_template_with_request: {e}")
+        return template
+
+def generate_template(request: str, style: str = "기본형") -> str:
+    try:
+        style_guides = {
+            # ======================================================
+            # 1. 기본형 테마 (수정 불필요)
+            # ======================================================
+            "기본형_친근": """
+            # 스타일 설명: 친구에게 말하듯 부드럽고 친근한 어투를 사용하는 기본 템플릿입니다.
+            # 뼈대:
+            [가벼운 제목]
+            #{고객명}님, 안녕하세요!
+            요청하신 내용에 대해 알려드릴게요.
+            [버튼 이름]
+            # 예시:
+            [주문하신 상품이 준비됐어요!]
+            #{고객명}님, 안녕하세요!
+            주문하신 상품이 매장에 도착했어요. 편하실 때 찾아가세요!
+            자세히 보러가기
+            """,
+            "기본형_공식": """
+            # 스타일 설명: 정중하고 격식 있는 어투를 사용하는 비즈니스용 기본 템플릿입니다.
+            # 뼈대:
+            [정중한 제목]
+            #{고객명} 고객님께,
+            요청하신 내용에 대해 아래와 같이 안내드립니다.
+            감사합니다.
+            [버튼 이름]
+            # 예시:
+            [결제 완료 내역 안내]
+            #{고객명} 고객님께,
+            요청하신 결제 내역이 아래와 같이 정상적으로 처리되었음을 안내드립니다.
+            주문번호: #{주문번호}
+            결제금액: #{결제금액}
+            감사합니다.
+            상세 영수증 확인
+            """,
+            "기본형_긴급": """
+            # 스타일 설명: 긴급하거나 중요한 정보를 즉시 전달해야 할 때 사용하는 간결한 템플릿입니다.
+            # 뼈대:
+            [긴급 안내 제목]
+            중요한 안내사항입니다.
+            #{고객명}님, 반드시 확인해 주시기 바랍니다.
+            [버튼 이름]
+            # 예시:
+            [계정 보안 경고]
+            #{고객명}님의 계정에서 새로운 로그인이 감지되었습니다.
+            본인이 아닐 경우 즉시 비밀번호를 변경해 주시기 바랍니다.
+            계정 활동 확인
+            """,
+
+            # ======================================================
+            # 2. 이미지형 테마 (수정됨)
+            # ======================================================
+            "이미지형_상품홍보": """
+            # 스타일 설명: 상품 이미지를 강조하며 구매를 유도하는 마케팅용 템플릿입니다.
+            # 뼈대:
+            (이미지 영역: 매력적인 상품 이미지)
+            [시선을 끄는 제목]
+            #{{본문}}
+            [강력한 CTA 버튼]
+            # 예시:
+            (이미지: 신상품 스니커즈)
+            [이번 주말, 단 3일간의 특별 할인!]
+            #{고객명}님만을 위해 준비한 새로운 스니커즈 컬렉션을 30% 할인된 가격으로 만나보세요.
+            지금 바로 구매하기
+            """,
+            "이미지형_정보전달": """
+            # 스타일 설명: 차트, 지도, 인포그래픽 등의 정보성 이미지를 사용하여 내용을 효과적으로 전달합니다.
+            # 뼈대:
+            (이미지 영역: 정보성 이미지)
+            [정보 요약 제목]
+            #{{본문}}
+            [버튼 이름]
+            # 예시:
+            (이미지: 월별 사용량 그래프)
+            [8월 서비스 이용 내역 리포트]
+            #{고객명}님의 지난달 서비스 이용 내역을 그래프로 확인해보세요.
+            지난달 대비 #{변동률}% 사용량이 변화했습니다.
+            상세 리포트 보기
+            """,
+            "이미지형_감성": """
+            # 스타일 설명: 감성적인 이미지와 문구를 사용하여 브랜드 이미지를 높이거나 특별한 메시지를 전달합니다.
+            # 뼈대:
+            (이미지 영역: 감성적인 사진)
+            [감성적인 문구의 제목]
+            #{{본문}}
+            [차분한 느낌의 버튼]
+            # 예시:
+            (이미지: 비 오는 창가 풍경)
+            [비 오는 날, 따뜻한 커피 한 잔 어떠세요?]
+            #{고객명}님, 잠시 창밖을 보며 여유를 가져보세요.
+            오늘 하루도 고생 많으셨습니다.
+            음악과 함께 쉬어가기
+            """,
+
+            # ======================================================
+            # 3. 아이템리스트형 테마 (수정됨)
+            # ======================================================
+            "아이템리스트형_주문내역": """
+            # 스타일 설명: 구매한 상품 목록과 같이 여러 항목을 명확하게 나열하여 전달합니다.
+            # 뼈대:
+            [주문 내역 안내]
+            #{고객명}님, 주문하신 상품 내역입니다.
+            #{{아이템리스트}}
+            총 결제금액: #{총금액}
+            [버튼 이름]
+            # 예시:
+            [주문하신 상품이 배송 시작되었습니다]
+            #{고객명}님, 주문하신 상품이 안전하게 포장되어 출발했습니다.
+            - 주문번호: #{주문번호}
+            - 상품명: #{상품명} 외 2건
+            - 배송사: #{택배사}
+            - 송장번호: #{송장번호}
+            배송 조회하기
+            """,
+            "아이템리스트형_단계별안내": """
+            # 스타일 설명: 회원가입, 이벤트 참여 방법 등 순서가 있는 정보를 단계별로 안내합니다.
+            # 뼈대:
+            [단계별 안내 제목]
+            아래 순서에 따라 진행해주세요.
+            #{{단계별안내리스트}}
+            [버튼 이름]
+            # 예시:
+            [이벤트 참여 방법 안내]
+            간단하게 3단계만 거치면 이벤트 참여 완료!
+            1. 앱 최신 버전으로 업데이트하기
+            2. 이벤트 페이지에서 '응모하기' 버튼 클릭
+            3. 마케팅 수신 동의 확인하기
+            이벤트 참여하러 가기
+            """,
+            "아이템리스트형_핵심요약": """
+            # 스타일 설명: 긴 내용이나 약관의 핵심만을 요약하여 전달할 때 사용합니다.
+            # 뼈대:
+            [핵심 내용 요약]
+            #{고객명}님, 알아두셔야 할 핵심 내용입니다.
+            #{{핵심요약리스트}}
+            [버튼 이름]
+            # 예시:
+            [서비스 이용약관 변경 사전 안내]
+            #{고객명}님, 2025년 9월 1일부터 서비스 이용약관이 변경됩니다.
+            - 주요 변경사항: 개인정보 처리 방침 강화
+            - 효력 발생일: 2025년 9월 1일
+            - 참고: 미동의 시 서비스 이용이 제한될 수 있습니다.
+            전체 내용 확인하기
+            """
+        }
+
+        if style == "기본형":
+            style = "기본형_공식"
+        elif style == "이미지형":
+            style = "이미지형_상품홍보"
+        elif style == "아이템리스트형":
+            style = "아이템리스트형_주문내역"
+
+        style_guide = style_guides.get(style, style_guides["기본형_공식"])
+
         if 'generation' not in retrievers or not retrievers['generation']:
             print("🚨 경고: generation 리트리버가 없어 기본 프롬프트로 생성합니다.")
             generation_rules = "사용자의 요청에 맞춰 정보성 템플릿을 생성하세요."
@@ -476,35 +754,46 @@ def generate_template(request: str, style: str = "기본형") -> str:
             generation_rules = "\n".join([doc.page_content for doc in generation_docs])
         
         generation_prompt = ChatPromptTemplate.from_template(
-            """당신은 알림톡 템플릿 생성 전문가입니다. 사용자의 요청에 따라 적절한 알림톡 템플릿을 생성해주세요.
-            # 사용자 요청: {request}
-            # 선택된 스타일: {style}
-            # 생성 규칙:
+            """당신은 주어진 '스타일 가이드'를 완벽하게 이해하고 따르는 알림톡 템플릿 생성 전문가입니다.
+
+            # 최종 목표: 사용자의 구체적인 요청사항을 '스타일 가이드'의 뼈대와 예시에 맞춰 변환하여, 완전한 템플릿 텍스트 하나만 생성하세요.
+
+            # 스타일 가이드:
+            {style_guide}
+
+            # 생성 규칙 (부가 정보):
             {rules}
+
+            # 사용자의 구체적인 요청:
+            {request}
+
             # 지시사항:
-            1. 위 규칙을 준수하여 알림톡 템플릿을 생성하세요.
-            2. 템플릿은 제목, 본문, 버튼 텍스트로 구성되어야 합니다.
-            3. 각 줄은 개행으로 구분하고, 마지막 줄은 버튼 텍스트입니다.
-            4. 템플릿 텍스트만 출력하고, 다른 설명은 추가하지 마세요.
+            1. **가장 중요한 규칙**: 최종 결과물은 반드시 [제목], [본문], [버튼]의 각 파트가 명확하게 줄바꿈(`\\n`)으로 구분된 **여러 줄의 텍스트**여야 합니다.
+            2. **스타일 준수 의무**: '사용자의 구체적인 요청'이 '스타일 가이드'와 어울리지 않더라도, 요청 내용을 스타일의 뼈대와 예시에 맞게 **창의적으로 재해석하고 변형**하여 반드시 해당 스타일로 만들어야 합니다. 예를 들어, 요청이 '시험 일정 안내'이고 스타일이 '이미지형'이라면, 시험을 상징하는 이미지(책, 캘린더 등)을 가정하고 그에 어울리는 문구를 생성해야 합니다.
+            3. '스타일 가이드'의 '뼈대'와 '예시'를 최우선으로 참고하여 구조와 형식을 결정하세요.
+            4. '사용자의 구체적인 요청'에서 내용을 추출하여 뼈대를 채워 넣으세요.
+            5. 바뀔 수 있는 구체적인 정보(예: 고객명, 주문번호, 날짜)는 `#{{변수명}}` 형식으로 만드세요.
+            6. **이미지형 템플릿의 경우**: `(이미지 영역: ...)` 부분에 이미지에 대한 간략한 설명을 포함하세요. 이 설명은 실제 이미지가 아닌, 어떤 종류의 이미지가 들어갈지 LLM이 이해할 수 있도록 돕는 역할을 합니다.
+            7. **아이템리스트형 템플릿의 경우**: `#{{아이템리스트}}`, `#{{단계별안내리스트}}`, `#{{핵심요약리스트}}`와 같은 변수에는 사용자의 요청에 따라 여러 항목을 `- 항목1: 내용1\\n- 항목2: 내용2` 형식으로 채워 넣으세요.
+            8. 다른 어떤 설명도 없이, 오직 최종 템플릿 텍스트만 출력하세요.
             """
         )
         
         generation_chain = generation_prompt | llm | StrOutputParser()
         template = generation_chain.invoke({
             "request": request,
-            "style": style,
+            "style_guide": style_guide,
             "rules": generation_rules
         })
         
-        return template.strip()
+        return template.strip().strip('"`')
+        
     except Exception as e:
         print(f"Error in generate_template: {e}")
         return "템플릿 생성 중 오류가 발생했습니다.\n다시 시도해주세요.\n확인"
 
 def validate_template(draft: str) -> dict:
-    """템플릿 검증 함수"""
     try:
-        # [수정] compliance, rejected 리트리버가 없을 경우 기본값 사용
         if 'compliance' not in retrievers or not retrievers['compliance']:
             print("🚨 경고: compliance 리트리버가 없어 검증을 건너뜁니다.")
             rules_with_metadata = "기본 규정: 광고성 문구, 욕설, 비방을 포함하지 마세요."
@@ -531,7 +820,7 @@ def validate_template(draft: str) -> dict:
             {rejections}
             # 지시사항:
             1. 템플릿이 규칙을 위반하는지 꼼꼼히 검토하세요.
-            2. 위반 사항이 없다면 'status'를 'accepted'로 설정하고, 'revised_template'에 원본 초안을 그대로 넣으세요.
+            2. 위반 사항이 없다면 'status'를 'accepted'로 설정하세요.
             3. 위반 사항이 있다면 'status'를 'rejected'로 설정하고, 'suggestion'에 구체적인 개선 방안을 제시하세요.
             # 출력 형식 (JSON):
             {format_instructions}
@@ -544,6 +833,8 @@ def validate_template(draft: str) -> dict:
             "rejections": rejections, 
             "format_instructions": parser.get_format_instructions()
         })
+        if 'revised_template' in result:
+            del result['revised_template']
         return result
     except Exception as e:
         print(f"Error in validate_template: {e}")
@@ -551,14 +842,15 @@ def validate_template(draft: str) -> dict:
             "status": "accepted",
             "reason": "검증 중 오류가 발생했지만 템플릿을 승인합니다.",
             "evidence": None,
-            "suggestion": None,
-            "revised_template": draft
+            "suggestion": None
         }
+
 
 def correct_template(state: dict) -> str:
     """템플릿 수정 함수"""
     try:
         attempts = state.get('correction_attempts', 0)
+        # 동적 지시사항 설정
         if attempts == 0:
             instruction = "3. 광고성 문구를 제거하거나, 정보성 내용으로 순화하는 등, 제안된 방향에 맞게 템플릿을 수정하세요."
         elif attempts == 1:
@@ -567,27 +859,38 @@ def correct_template(state: dict) -> str:
             instruction = """3. **(최종 수정: 관점 전환)** 여전히 광고성으로 보입니다. 이것이 마지막 시도입니다.
             - **관점 전환:** 메시지의 주체를 '우리(사업자)'에서 '고객님'으로 완전히 바꾸세요.
             - **목적 변경:** '판매'나 '방문 유도'가 아니라, '고객님이 과거에 동의한 내용에 따라 고객님의 권리(혜택) 정보를 안내'하는 것으로 목적을 재정의하세요."""
-        
+
         correction_prompt_template = """당신은 지적된 문제점을 해결하여 더 나은 대안을 제시하는 전문 카피라이터입니다.
         당신의 유일한 임무는 아래 지시사항에 따라 **수정된 템플릿 초안 하나만**을 생성하는 것입니다. 초안 외에 다른 설명은 절대로 덧붙이지 마세요.
+
         # 원래 사용자 요청: {original_request}
-        # 이전에 제안했던 템플릿 (반려됨): {rejected_draft}
-        # 반려 사유 및 개선 제안: {rejection_reason}
-        # 지시사항
+        # 이전에 제안했던 템플릿 (반려됨):
+        ```{rejected_draft}```
+        # 반려 사유 및 개선 제안:
+        {rejection_reason}
+
+        # 지시사항:
         1. '반려 사유 및 개선 제안'을 완벽하게 이해하고, 지적된 모든 문제점을 해결하세요.
         2. '원래 사용자 요청'의 핵심 의도는 유지해야 합니다.
         {dynamic_instruction}
+
         # 수정된 템플릿 초안 (오직 템플릿 텍스트만 출력):
         """
         correction_prompt = ChatPromptTemplate.from_template(correction_prompt_template)
         correction_prompt = correction_prompt.partial(dynamic_instruction=instruction)
         correction_chain = correction_prompt | llm | StrOutputParser()
+
+        # 반려 사유와 제안을 합쳐서 전달
+        rejection_info = state['validation_result']['reason']
+        if state['validation_result'].get('suggestion'):
+            rejection_info += "\n개선 제안: " + state['validation_result']['suggestion']
+
         new_draft = correction_chain.invoke({
             "original_request": state['original_request'],
             "rejected_draft": state['template_draft'],
-            "rejection_reason": state['validation_result']['reason'] + "\n개선 제안: " + state['validation_result']['suggestion']
+            "rejection_reason": rejection_info
         })
-        return new_draft.strip()
+        return new_draft.strip().strip('"`')
     except Exception as e:
         print(f"Error in correct_template: {e}")
         return state.get('template_draft', '수정 중 오류가 발생했습니다.')

@@ -91,7 +91,9 @@ async def chat(request: ChatRequest) -> Dict:
             'options': response_data.get('options', []),
             'template': response_data.get('template', ''),
             'html_preview': response_data.get('html_preview', ''),
+            'html_previews': response_data.get('html_previews', []),
             'editable_variables': response_data.get('editable_variables', {}),
+            'templates': response_data.get('templates', []),
             'step': response_data.get('state', {}).get('step', 'initial')
         }
     except Exception as e:
