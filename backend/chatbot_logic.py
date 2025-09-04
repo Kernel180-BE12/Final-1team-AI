@@ -3,6 +3,7 @@ import json
 import re
 from typing import TypedDict, List, Optional, Dict
 import sys
+import traceback
 
 # Pydantic 및 LangChain 호환성을 위한 임포트
 from pydantic import BaseModel, Field, PrivateAttr
@@ -117,8 +118,8 @@ class ParameterizedResult(BaseModel):
 class StructuredTemplate(BaseModel):
     title: str = Field(description="템플릿의 제목 또는 첫 문장")
     body: str = Field(description="제목과 버튼 텍스트를 제외한 템플릿의 핵심 본문 내용. 줄바꿈이 있다면 \\n으로 유지해주세요.")
-    button_text: str = Field(description="사용자가 클릭할 버튼에 표시될 텍스트. 보통 마지막 줄에 위치합니다.")
     image_url: Optional[str] = Field(None, description="템플릿에 포함될 이미지의 URL. 이미지가 없는 경우 null입니다.")
+    buttons: Optional[List[tuple[str, str]]] = Field(None, description="템플릿에 포함될 버튼 리스트. 예: [('웹사이트', '자세히 보기')]")
 
 # --- 전역 변수 및 헬퍼 함수 ---
 llm = None
@@ -151,10 +152,12 @@ def structure_template_with_llm(template_string: str) -> StructuredTemplate:
         """당신은 주어진 텍스트를 분석하여 핵심 구성 요소로 구조화하는 전문가입니다.
         # 지시사항:
         1. 텍스트의 첫 번째 문장이나 줄을 'title'로 추출합니다.
-        2. 텍스트의 가장 마지막 줄이나 문구를 'button_text'로 추출합니다.
-        3. 제목과 버튼 텍스트를 제외한 나머지 모든 내용을 'body'로 추출합니다.
-        4. 만약 텍스트 내용이 이미지를 암시하거나 설명한다면(예: '(이미지:...)'), 해당 이미지를 대표할 수 있는 URL을 'image_url' 필드에 '#{{이미지주제}}_이미지_URL' 형식의 변수로 생성하세요. (예: '#{{신발}}_이미지_URL'). 이미지가 언급되지 않으면 이 필드는 null입니다.
-        5. 최종 결과를 지정된 JSON 형식으로만 출력해야 합니다.
+        2. 텍스트의 가장 마지막 줄에 있는 버튼 정보를 분석하여 'buttons' 리스트를 생성합니다.
+        3. 버튼은 최대 2개까지 생성할 수 있으며, 없으면 빈 리스트 `[]`를 반환합니다.
+        4. 각 버튼은 ['버튼종류', '버튼이름'] 형식의 튜플이어야 합니다. 버튼 종류는 내용에 맞게 '웹사이트', '앱링크', '전화하기' 등으로 추론하세요.
+        5. 제목과 버튼을 제외한 나머지 모든 내용을 'body'로 추출합니다.
+        6. 이미지가 언급되면 'image_url'을 생성하고, 없으면 null로 둡니다.
+        7. 최종 결과를 지정된 JSON 형식으로만 출력해야 합니다.
 
         # 원본 텍스트:
         {raw_text}
@@ -177,49 +180,14 @@ def structure_template_with_llm(template_string: str) -> StructuredTemplate:
         return StructuredTemplate(
             title=template_string.split('\n')[0].strip(),
             body=template_string,
-            button_text="확인",
-            image_url=None
+            image_url=None,
+            buttons=[]
         )
     
 
-def render_template_from_structured(data: StructuredTemplate) -> str:
-    """구조화된 데이터를 받아 안전하게 HTML 미리보기를 생성합니다."""
-    
-    body_html = data.body.replace('\n', '<br>')
-    body_html = re.sub(r'(#{\w+})', r'<span class="placeholder">\1</span>', body_html)
-    
-    # image_url 값이 있으면 img 태그를 생성합니다.
-    image_html = ""
-    if data.image_url:
-        # 실제 서비스에서는 이 변수를 실제 이미지 주소로 교체해야 합니다.
-        # 여기서는 이해를 돕기 위해 텍스트가 포함된 placeholder 이미지를 사용합니다.
-        image_text = data.image_url.replace("#{", "").replace("}_이미지_URL", "")
-        placeholder_url = f"https://via.placeholder.com/350x150.png?text={image_text}"
-        image_html = f'<img src="{placeholder_url}" alt="Template Image" style="width:100%; height:auto; display:block;">'
-
-    html_output = f"""
-    <div class="template-preview">
-        {image_html}
-        <div class="header">알림톡 도착</div>
-        <div class="content">
-            <div class="icon">📄</div>
-            <h2 class="title">{data.title}</h2>
-            <div class="body-text">{body_html}</div>
-            <div class="button-container"><span>{data.button_text}</span></div>
-        </div>
-    </div>
-    <style>
-        .template-preview {{ max-width: 350px; border-radius: 8px; overflow: hidden; font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; border: 1px solid #e0e0e0; margin: 1em 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
-        .template-preview .header {{ background-color: #F0CA4F; color: #333; padding: 10px 15px; font-weight: bold; font-size: 14px; }}
-        .template-preview .content {{ background-color: #E6ECF2; padding: 25px 20px; position: relative; }}
-        .template-preview .icon {{ position: absolute; top: 25px; right: 20px; font-size: 36px; opacity: 0.5; }}
-        .template-preview .title {{ font-size: 24px; font-weight: bold; margin: 0 0 20px; padding-right: 40px; color: #333; }}
-        .template-preview .body-text {{ font-size: 15px; line-height: 1.6; color: #555; margin-bottom: 20px; }}
-        .template-preview .placeholder {{ color: #007bff; font-weight: bold; }}
-        .template-preview .button-container {{ background-color: #FFFFFF; border: 1px solid #d0d0d0; border-radius: 5px; text-align: center; padding: 12px 10px; font-size: 15px; font-weight: bold; color: #007bff; cursor: pointer; }}
-    </style>
-    """
-    return html_output
+def render_template_from_structured(data: StructuredTemplate) -> StructuredTemplate:
+    """구조화된 데이터를 받아 StructuredTemplate 객체를 반환합니다."""
+    return data
 
 def parameterize_template(template_string: str) -> Dict:
     parser = JsonOutputParser(pydantic_object=ParameterizedResult)
@@ -358,17 +326,15 @@ def process_chat_message(message: str, state: dict) -> dict:
                     'options': ['기본형', '이미지형', '아이템리스트형']
                 }
             
-            # --- [수정된 부분 1] ---
-            # 텍스트를 먼저 구조화하고, 그 다음에 HTML로 렌더링합니다.
-            html_previews = [render_template_from_structured(structure_template_with_llm(doc.page_content)) for doc in similar_docs[:3]]
-            # --- [수정 끝] ---
+            structured_templates = [render_template_from_structured(structure_template_with_llm(doc.page_content)) for doc in similar_docs[:3]]
             
+            # [수정] 사용자 안내 메시지의 '신규 생성'을 '새로 만들기'로 변경
             return {
-                'message': '요청하신 내용과 유사한 기존 템플릿을 찾았습니다:\n\n' + '해당 템플릿중에서 사용하실 템플릿을 선택하시거나, 새로운 템플릿 생성을 원하시면 "신규 생성"을 선택해주세요.',
+                'message': '요청하신 내용과 유사한 기존 템플릿을 찾았습니다:\n\n' + '해당 템플릿중에서 사용하실 템플릿을 선택하시거나, 새로운 템플릿 생성을 원하시면 "새로 만들기"를 선택해주세요.',
                 'state': state,
-                'options': ['템플릿 1', '템플릿 2', '템플릿 3', '신규 생성'],
+                # 'options': ['템플릿 1', '템플릿 2', '템플릿 3', '새로 만들기'],
                 'templates': [doc.page_content for doc in similar_docs[:3]],
-                'html_previews': html_previews
+                'structured_templates': structured_templates
             }
         
         elif state['step'] == 'recommend_templates':
@@ -385,7 +351,8 @@ def process_chat_message(message: str, state: dict) -> dict:
                 state['step'] = 'generate_and_validate'
                 return process_chat_message(message, state)
 
-            elif message == '신규 생성':
+            # [수정] 조건문의 '신규 생성'을 '새로 만들기'로 변경
+            elif message == '새로 만들기':
                 state['step'] = 'select_style'
                 return {
                     'message': '새로운 템플릿을 생성합니다. 원하시는 스타일을 선택해주세요:',
@@ -502,32 +469,26 @@ def process_chat_message(message: str, state: dict) -> dict:
         
         elif state['step'] == 'completed':
             final_filled_template = state.get("template_draft", "")
-            
-            # --- [수정된 부분 2] ---
-            # 1. 텍스트를 LLM을 이용해 '구조화된 객체'로 변환합니다.
             structured_data = structure_template_with_llm(final_filled_template)
-            
-            # 2. '구조화된 객체'를 HTML 생성 함수로 전달합니다.
-            html_preview = render_template_from_structured(structured_data)
-            # --- [수정 끝] ---
-            
+
             base_template = state.get("base_template", final_filled_template)
-            variables = state.get('variables_info')
-            if variables is None:
-                param_result = parameterize_template(final_filled_template)
-                variables = param_result.get('variables', [])
+            variables = state.get('variables_info', [])
 
             editable_variables = {
                 "parameterized_template": base_template,
                 "variables": variables
             } if variables else None
+
+            # 다음 대화를 위해 상태 초기화
             state['step'] = 'initial'
+            
             return {
                 'message': '✅ 템플릿이 성공적으로 생성되었습니다!',
                 'state': state,
                 'template': final_filled_template,
-                'html_preview': html_preview,
-                'editable_variables': editable_variables
+                'structured_template': structured_data,
+                'editable_variables': editable_variables,
+                'buttons': structured_data.buttons
             }
         
         return {
@@ -537,6 +498,7 @@ def process_chat_message(message: str, state: dict) -> dict:
         
     except Exception as e:
         print(f"Error in process_chat_message: {e}")
+        traceback.print_exc() # 오류 발생 시 스택 트레이스 출력
         return {
             'message': f'처리 중 오류가 발생했습니다: {str(e)}',
             'state': {'step': 'initial'}
@@ -578,10 +540,7 @@ def fill_template_with_request(template: str, request: str) -> str:
             "request": request
         })
         
-        # --- [수정된 부분] ---
-        # LLM 결과물 앞뒤의 공백과 인용부호('", `)를 모두 제거합니다.
         cleaned_template = filled_template.strip().strip('"`')
-        # --- [수정 끝] ---
 
         print(f"템플릿 채우기 완료: 결과='{cleaned_template}'")
         return cleaned_template

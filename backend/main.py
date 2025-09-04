@@ -83,17 +83,16 @@ async def chat(request: ChatRequest) -> Dict:
         
         response_data = process_chat_message(request.message, session_state)
         
-        # 프론트엔드가 필요로 하는 모든 키를 포함하여 응답을 구성합니다.
+        # [수정] 프론트엔드가 필요로 하는 키를 정확히 포함하여 응답을 구성합니다.
         return {
             'success': True,
             'response': response_data.get('message', ''),
             'state': response_data.get('state', {}),
             'options': response_data.get('options', []),
             'template': response_data.get('template', ''),
-            'html_preview': response_data.get('html_preview', ''),
-            'html_previews': response_data.get('html_previews', []),
+            'structured_template': response_data.get('structured_template'), # 최종 미리보기를 위해 키 추가/수정
             'editable_variables': response_data.get('editable_variables', {}),
-            'templates': response_data.get('templates', []),
+            'structured_templates': response_data.get('structured_templates', []), # 추천 템플릿 목록을 위해 키 추가
             'step': response_data.get('state', {}).get('step', 'initial')
         }
     except Exception as e:
@@ -119,4 +118,3 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
