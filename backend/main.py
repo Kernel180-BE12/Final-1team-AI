@@ -3,34 +3,23 @@ import sys
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 import traceback
 
+# 프로젝트 루트를 sys.path에 추가
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
 load_dotenv()
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-from chatbot_logic import initialize_system, process_chat_message
+from graph import app_graph
+from chatbot_logic import initialize_system
 
 # --- FastAPI 앱 생성 및 설정 ---
 app = FastAPI()
 
-# --- CORS 미들웨어 추가 (프론트엔드와 통신 허용) ---
-# 프론트엔드 개발 서버의 주소 목록
-origins = [
-    "http://localhost",
-    "http://localhost:5174", # Vite React 개발 서버의 기본 주소
-    "http://127.0.0.1:5174",
-    "http://localhost:3000", # React 개발 서버 추가
-    "http://127.0.0.1:3000",
-    "http://localhost:5173", # Vite React 개발 서버의 기본 주소
-    "http://127.0.0.1:5173",
-    "http://localhost:8080", # 백엔드 test
-    "http://127.0.0.1:8080",
-    # 필요하다면 프론트엔드 담당자의 다른 주소도 추가할 수 있습니다.
-]
-
+# CORS 설정
+origins = ["*"] # 개발 중에는 모든 출처 허용
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -39,79 +28,70 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- API 요청/응답 모델 정의 ---
+# API 요청/응답 모델
 class ChatRequest(BaseModel):
     message: str
-    state: Optional[Dict] = Field(default_factory=dict)
+    state: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
-# --- FastAPI 이벤트 핸들러 ---
+# 서버 시작 시 초기화
 @app.on_event("startup")
 async def startup_event():
-    """
-    FastAPI 서버가 시작될 때 단 한 번만 실행됩니다.
-    무거운 모델 로딩 및 초기화 작업을 여기서 수행합니다.
-    """
     print("서버 시작: 시스템 초기화를 진행합니다...")
-    try:
-        initialize_system()
-        print("시스템 초기화 완료.")
-    except Exception as e:
-        print(f"시스템 초기화 실패: {e}")
-        traceback.print_exc()
+    initialize_system()
+    print("시스템 초기화 완료.")
 
-# --- API 엔드포인트 정의 ---
 @app.post("/api/chat")
-async def chat(request: ChatRequest) -> Dict:
-    """
-    챗봇 메시지를 처리하는 메인 엔드포인트입니다.
-    """
+async def chat(request: ChatRequest):
+    """LangGraph 기반으로 통합된 챗봇 엔드포인트."""
     try:
-        session_state = request.state
-        # 세션 상태가 비어있을 경우 초기화
-        if not session_state:
-            session_state = {
-                'step': 'initial',
-                'original_request': '',
-                'user_choice': '',
-                'selected_style': '',
-                'template_draft': '',
-                'validation_result': None,
-                'correction_attempts': 0
-            }
-        
-        response_data = process_chat_message(request.message, session_state)
-        
-        # [수정] 프론트엔드가 필요로 하는 키를 정확히 포함하여 응답을 구성합니다.
-        return {
-            'success': True,
-            'response': response_data.get('message', ''),
-            'state': response_data.get('state', {}),
-            'options': response_data.get('options', []),
-            'template': response_data.get('template', ''),
-            'structured_template': response_data.get('structured_template'), # 최종 미리보기를 위해 키 추가/수정
-            'editable_variables': response_data.get('editable_variables', {}),
-            'structured_templates': response_data.get('structured_templates', []), # 추천 템플릿 목록을 위해 키 추가
-            'step': response_data.get('state', {}).get('step', 'initial')
+        message = request.message
+        session_state = request.state or {}
+
+        # LangGraph에 전달할 상태를 구성합니다.
+        # 이전 대화의 상태(template_pipeline_state)를 그대로 전달합니다.
+        initial_graph_state = {
+            "original_request": message, # 사용자의 현재 입력을 전달
+            "template_pipeline_state": session_state.get("template_pipeline_state", {
+                'step': 'initial' # 상태가 없으면 초기 상태로 시작
+            }),
+            "intent": None,
+            "next_action": None,
+            "final_response": None,
+            "retrieved_docs": None,
+            "error": None
         }
+        
+        print(f"새로운 요청 수신: '{message}' -> LangGraph 실행")
+        
+        # LangGraph 워크플로우 실행
+        final_graph_state = app_graph.invoke(initial_graph_state, config={"recursion_limit": 10})
+        
+        # 그래프 실행 결과에서 최종 응답 데이터 추출
+        response_data = final_graph_state.get("final_response", {})
+        
+        # 프론트엔드에 전달할 다음 대화의 세션 상태 구성
+        new_session_state = {
+            # original_request는 템플릿 파이프라인 내부에서 관리하므로 최상위에서는 제거
+            "intent": final_graph_state.get("intent"),
+            "next_action": final_graph_state.get("next_action"),
+            "template_pipeline_state": final_graph_state.get("template_pipeline_state", {})
+        }
+
+        return {
+            "success": True,
+            "response": response_data.get("message", "오류: 응답 메시지가 없습니다."),
+            "state": new_session_state,
+            "options": response_data.get("options", []),
+            "template": response_data.get("template", ""),
+            "structured_template": response_data.get("structured_template"),
+            "editable_variables": response_data.get("editable_variables", {}),
+            "structured_templates": response_data.get("structured_templates", []),
+        }
+
     except Exception as e:
-        print(f"API 처리 중 오류 발생: {e}")
+        print(f"API 처리 중 심각한 오류 발생: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"서버 내부 오류: {str(e)}")
-
-@app.get("/api/health")
-async def health_check():
-    """
-    서버가 정상적으로 작동하는지 확인하는 간단한 헬스 체크 엔드포인트입니다.
-    """
-    return {"status": "healthy"}
-
-# --- 정적 파일 서빙 (기존 Flask의 serve 함수 대체) ---
-# 이 부분은 실제 배포 시 Nginx 같은 웹서버가 담당하는 것이 더 효율적이지만,
-# 로컬 테스트를 위해 FastAPI로 간단히 구현할 수 있습니다.
-# 하지만 현재 프론트엔드 개발 서버를 따로 실행하는 방식에서는 이 부분이 없어도 무방합니다.
-# 만약 필요하다면 아래 주석을 해제하고 경로를 맞춰주세요.
-# from fastapi.staticfiles import StaticFiles
-# app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
