@@ -48,14 +48,14 @@ async def chat(request: ChatRequest):
         session_state = request.state or {}
 
         # LangGraph에 전달할 상태를 구성합니다.
-        # 이전 대화의 상태(template_pipeline_state)를 그대로 전달합니다.
         initial_graph_state = {
-            "original_request": message, # 사용자의 현재 입력을 전달
+            "original_request": message,
             "template_pipeline_state": session_state.get("template_pipeline_state", {
-                'step': 'initial' # 상태가 없으면 초기 상태로 시작
+                'step': 'initial'
             }),
             "intent": None,
-            "next_action": None,
+            # ▼▼▼ 바로 이 부분 문제입니다! None으로 초기화하는 대신 세션에서 값을 가져오도록 수정합니다. ▼▼▼
+            "next_action": session_state.get("next_action"), # <--- 수정된 부분
             "final_response": None,
             "retrieved_docs": None,
             "error": None
@@ -71,7 +71,6 @@ async def chat(request: ChatRequest):
         
         # 프론트엔드에 전달할 다음 대화의 세션 상태 구성
         new_session_state = {
-            # original_request는 템플릿 파이프라인 내부에서 관리하므로 최상위에서는 제거
             "intent": final_graph_state.get("intent"),
             "next_action": final_graph_state.get("next_action"),
             "template_pipeline_state": final_graph_state.get("template_pipeline_state", {})

@@ -330,38 +330,36 @@ def initialize_system():
 def process_chat_message(message: str, state: dict) -> dict:
     """채팅 메시지 처리 - 최종 수정 로직 적용"""
     try:
+        if 'step' not in state:
+            state['step'] = 'initial'
+
         if state['step'] == 'initial':
-            state['original_request'] = message
+            # ▼▼▼ [수정된 부분] 상태에 original_request가 없으면 현재 메시지로 설정합니다. ▼▼▼
+            # 이렇게 하면 확인 절차에서 저장한 원래 요청을 덮어쓰지 않습니다.
+            if 'original_request' not in state:
+                state['original_request'] = message
+            # ▲▲▲ 여기까지 수정 ▲▲▲
+            
             state['step'] = 'recommend_templates'
             
             if 'whitelist' not in retrievers or not retrievers['whitelist']:
-                print("🚨 경고: whitelist 리트리버가 없어 신규 생성으로 바로 진행합니다.")
                 state['step'] = 'select_style'
-                return {
-                    'message': '유사 템플릿 검색 기능이 비활성화 상태입니다. 새로운 템플릿을 생성하겠습니다.\n\n원하시는 스타일을 선택해주세요:',
-                    'state': state,
-                    'options': ['기본형', '이미지형', '아이템리스트형']
-                }
+                return {'message': '유사 템플릿 검색 기능이 비활성화 상태입니다. 새로운 템플릿을 생성하겠습니다.\n\n원하시는 스타일을 선택해주세요:', 'state': state, 'options': ['기본형', '이미지형', '아이템리스트형']}
 
-            similar_docs = retrievers['whitelist'].invoke(message)
+            # 여기서 message 대신 state['original_request']를 사용해야 합니다.
+            similar_docs = retrievers['whitelist'].invoke(state['original_request'])
             
             if not similar_docs:
                 state['step'] = 'select_style'
-                return {
-                    'message': '유사한 기존 템플릿을 찾지 못했습니다. 새로운 템플릿을 생성하겠습니다.\n\n원하시는 스타일을 선택해주세요:',
-                    'state': state,
-                    'options': ['기본형', '이미지형', '아이템리스트형']
-                }
+                return {'message': '유사한 기존 템플릿을 찾지 못했습니다. 새로운 템플릿을 생성하겠습니다.\n\n원하시는 스타일을 선택해주세요:', 'state': state, 'options': ['기본형', '이미지형', '아이템리스트형']}
             
             structured_templates = [render_template_from_structured(structure_template_with_llm(doc.page_content)) for doc in similar_docs[:3]]
             
-            return {
-                'message': '요청하신 내용과 유사한 기존 템플릿을 찾았습니다:\n\n' + '해당 템플릿중에서 사용하실 템플릿을 선택하시거나, 새로운 템플릿 생성을 원하시면 "새로 만들기"를 선택해주세요.',
-                'state': state,
-                'templates': [doc.page_content for doc in similar_docs[:3]],
-                'structured_templates': structured_templates,
-                # 'options': [f'템플릿 {i+1}' for i in range(len(similar_docs[:3]))] + ['새로 만들기']
-            }
+            # template_options = [f'템플릿 {i+1}' for i in range(len(similar_docs[:3]))]
+            # new_creation_options = ['새로 만들기 (기본형)', '새로 만들기 (이미지형)', '새로 만들기 (아이템리스트형)']
+            final_options = ['실행 취소']
+
+            return {'message': '요청하신 내용과 유사한 기존 템플릿을 찾았습니다:\n\n' + '사용할 템플릿을 선택하시거나, 원하시는 스타일로 새로 만들어주세요.', 'state': state, 'templates': [doc.page_content for doc in similar_docs[:3]], 'structured_templates': structured_templates, 'options': final_options}
         
         elif state['step'] == 'recommend_templates':
             if message in ['템플릿 1', '템플릿 2', '템플릿 3']:
@@ -377,23 +375,28 @@ def process_chat_message(message: str, state: dict) -> dict:
                 state['step'] = 'generate_and_validate'
                 return process_chat_message(message, state)
 
-            elif message == '새로 만들기':
-                state['step'] = 'select_style'
-                return {
-                    'message': '새로운 템플릿을 생성합니다. 원하시는 스타일을 선택해주세요:',
-                    'state': state,
-                    'options': ['기본형', '이미지형', '아이템리스트형']
-                }
-            else:
-                state['step'] = 'select_style'
+            elif message.startswith('새로 만들기'):
+                style = '기본형'
+                if '이미지형' in message: style = '이미지형'
+                elif '아이템리스트형' in message: style = '아이템리스트형'
+                state['selected_style'] = style
+                state['step'] = 'generate_and_validate'
                 return process_chat_message(message, state)
 
+            elif message == '실행 취소':
+                state['step'] = 'initial'
+                return {'message': '템플릿 추천을 취소했습니다. 다른 도움이 필요하시면 말씀해주세요.', 'state': {'step': 'initial'}}
+
+            else:
+                state['step'] = 'initial'
+                return {'message': '선택이 올바르지 않습니다. 초기 단계로 돌아갑니다. 다시 요청해주세요.', 'state': {'step': 'initial'}}
+
+        # ... (이하 함수 내용 변경 없음) ...
         if state.get('step') == 'select_style':
             if message in ['기본형', '이미지형', '아이템리스트형']:
                 state['selected_style'] = message
             else:
                 state['selected_style'] = '기본형'
-            
             state['step'] = 'generate_and_validate'
             return process_chat_message(message, state)
 
@@ -402,22 +405,14 @@ def process_chat_message(message: str, state: dict) -> dict:
                 base_template = state['selected_template']
                 del state['selected_template']
             else:
-                newly_generated = generate_template(
-                    state['original_request'], 
-                    state.get('selected_style', '기본형')
-                )
+                newly_generated = generate_template(state['original_request'], state.get('selected_style', '기본형'))
                 param_result = parameterize_template(newly_generated)
                 base_template = param_result.get('parameterized_template', newly_generated)
                 state['variables_info'] = param_result.get('variables', [])
 
             state['base_template'] = base_template
-            
             print("템플릿 내용을 채워 검증을 시작합니다.")
-            template_draft = fill_template_with_request(
-                template=base_template,
-                request=state['original_request']
-            )
-            
+            template_draft = fill_template_with_request(template=base_template, request=state['original_request'])
             state['template_draft'] = template_draft
             validation_result = validate_template(template_draft)
             state['validation_result'] = validation_result
@@ -428,29 +423,19 @@ def process_chat_message(message: str, state: dict) -> dict:
                 return process_chat_message(message, state)
             else:
                 state['step'] = 'correction'
-                return {
-                    'message': f'템플릿을 생성했지만 규정 위반이 발견되었습니다.\n\n문제점: {validation_result["reason"]}\n\n개선 제안: {validation_result.get("suggestion", "없음")}\n\nAI가 자동으로 수정하겠습니다.',
-                    'state': state
-                }
+                return {'message': f'템플릿을 생성했지만 규정 위반이 발견되었습니다.\n\n문제점: {validation_result["reason"]}\n\n개선 제안: {validation_result.get("suggestion", "없음")}\n\nAI가 자동으로 수정하겠습니다.', 'state': state}
                 
         elif state['step'] == 'correction':
             if state['correction_attempts'] < MAX_CORRECTION_ATTEMPTS:
                 corrected_base_template = correct_template(state)
                 state['correction_attempts'] += 1
-                
                 validation_result = validate_template(corrected_base_template)
                 state["validation_result"] = validation_result
-                
                 if validation_result["status"] == "accepted":
                     state['base_template'] = corrected_base_template
-                    
                     print("AI가 수정한 템플릿에 내용을 다시 채웁니다.")
-                    final_draft = fill_template_with_request(
-                        template=corrected_base_template,
-                        request=state['original_request']
-                    )
+                    final_draft = fill_template_with_request(template=corrected_base_template, request=state['original_request'])
                     state['template_draft'] = final_draft
-                    
                     state["step"] = "completed"
                     return process_chat_message(message, state)
                 else:
@@ -458,11 +443,7 @@ def process_chat_message(message: str, state: dict) -> dict:
                     return process_chat_message(message, state)
             else:
                 state['step'] = 'manual_correction'
-                return {
-                    'message': f'AI 자동 수정이 {MAX_CORRECTION_ATTEMPTS}회 모두 실패했습니다.\n\n현재 템플릿:\n{state["template_draft"]}\n\n마지막 문제점: {state["validation_result"]["reason"]}\n\n직접 수정하시겠습니까? 수정할 내용을 입력해주세요.',
-                    'state': state,
-                    'options': ['포기하기']
-                }
+                return {'message': f'AI 자동 수정이 {MAX_CORRECTION_ATTEMPTS}회 모두 실패했습니다.\n\n현재 템플릿:\n{state["template_draft"]}\n\n마지막 문제점: {state["validation_result"]["reason"]}\n\n직접 수정하시겠습니까? 수정할 내용을 입력해주세요.', 'state': state, 'options': ['포기하기']}
                 
         elif state['step'] == 'manual_correction':
             if message == '포기하기':
@@ -472,61 +453,32 @@ def process_chat_message(message: str, state: dict) -> dict:
                 user_corrected_template = message
                 validation_result = validate_template(user_corrected_template)
                 state['validation_result'] = validation_result
-
                 if validation_result['status'] == 'accepted':
                     state['base_template'] = user_corrected_template
-                    
                     print("사용자가 수정한 템플릿에 내용을 다시 채웁니다.")
-                    final_draft = fill_template_with_request(
-                        template=user_corrected_template,
-                        request=state['original_request']
-                    )
+                    final_draft = fill_template_with_request(template=user_corrected_template, request=state['original_request'])
                     state['template_draft'] = final_draft
-                    
                     state['step'] = 'completed'
                     return process_chat_message(message, state)
                 else:
-                    return {
-                        'message': f'🚨 수정하신 템플릿에도 여전히 문제가 있습니다.\n\n문제점: {validation_result["reason"]}\n\n다시 수정해주시거나 "포기하기"를 선택해주세요.',
-                        'state': state,
-                        'options': ['포기하기']
-                    }
+                    return {'message': f'🚨 수정하신 템플릿에도 여전히 문제가 있습니다.\n\n문제점: {validation_result["reason"]}\n\n다시 수정해주시거나 "포기하기"를 선택해주세요.', 'state': state, 'options': ['포기하기']}
         
         elif state['step'] == 'completed':
             final_filled_template = state.get("template_draft", "")
             structured_data = structure_template_with_llm(final_filled_template)
-
             base_template = state.get("base_template", final_filled_template)
             variables = state.get('variables_info', [])
-
-            editable_variables = {
-                "parameterized_template": base_template,
-                "variables": variables
-            } if variables else None
-
+            editable_variables = {"parameterized_template": base_template, "variables": variables} if variables else None
             state['step'] = 'initial'
-            
-            return {
-                'message': '✅ 템플릿이 성공적으로 생성되었습니다!',
-                'state': state,
-                'template': final_filled_template,
-                'structured_template': structured_data,
-                'editable_variables': editable_variables,
-                'buttons': structured_data.buttons
-            }
+            return {'message': '✅ 템플릿이 성공적으로 생성되었습니다!', 'state': state, 'template': final_filled_template, 'structured_template': structured_data, 'editable_variables': editable_variables, 'buttons': structured_data.buttons}
         
-        return {
-            'message': '알 수 없는 상태입니다. 다시 시도해주세요.',
-            'state': {'step': 'initial'}
-        }
-        
+        return {'message': '알 수 없는 상태입니다. 다시 시도해주세요.', 'state': {'step': 'initial'}}
     except Exception as e:
         print(f"Error in process_chat_message: {e}")
         traceback.print_exc()
-        return {
-            'message': f'처리 중 오류가 발생했습니다: {str(e)}',
-            'state': {'step': 'initial'}
-        }
+        return {'message': f'처리 중 오류가 발생했습니다: {str(e)}', 'state': {'step': 'initial'}}
+
+
 
 def fill_template_with_request(template: str, request: str) -> str:
     print(f"템플릿 채우기 시작: 요청='{request}', 템플릿='{template}'")
