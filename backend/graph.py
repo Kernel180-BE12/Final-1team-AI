@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph, END
 from state import GraphState
 from nodes import (
+    route_request_node,
     classify_intent_node,
     legal_inquiry_node,
     chit_chat_node,
@@ -10,25 +11,34 @@ from nodes import (
     cancel_node
 )
 
+def main_router(state: GraphState) -> str:
+    """대화 상태를 기반으로 요청을 라우팅하는 메인 컨트롤러."""
+    next_action = state.get("next_action")
+    pipeline_step = state.get("template_pipeline_state", {}).get("step")
+
+    if next_action == "awaiting_confirmation":
+        user_response = state.get("original_request", "").strip()
+        if user_response == "예":
+            return "template_generation_node"
+        elif user_response == "아니오":
+            return "cancel_node"
+        else:
+            return "template_confirmation_node"
+    
+    elif pipeline_step and pipeline_step != 'initial':
+        return "template_generation_node"
+    
+    else:
+        return "classify_intent_node"
+
 def route_by_intent(state: GraphState) -> str:
-    """의도에 따라 다음 노드를 결정하는 라우터 함수."""
+    """의도 분류 결과에 따라 다음 노드를 결정하는 라우터 함수."""
     if state.get("error"):
-        print("오류 발생, 그래프 종료")
         return END
     
     intent = state.get("intent")
     print(f"라우팅: 의도 '{intent}'에 따라 경로를 결정합니다.")
     
-    # "예/아니오" 응답에 대한 라우팅
-    if intent == "user_confirmed":
-        return "template_generation_node"
-    elif intent == "user_denied":
-        return "cancel_node"
-    elif intent == "confirmation_invalid":
-        # "예", "아니오"가 아닌 다른 응답 시 다시 확인 요청
-        return "template_confirmation_node"
-
-    # 최초 요청의 의도에 대한 라우팅
     if intent == "template_generation":
         return "template_confirmation_node"
     elif intent == "legal_inquiry":
@@ -44,6 +54,7 @@ def route_by_intent(state: GraphState) -> str:
 workflow = StateGraph(GraphState)
 
 # 노드 추가
+workflow.add_node("route_request_node", route_request_node)
 workflow.add_node("classify_intent_node", classify_intent_node)
 workflow.add_node("legal_inquiry_node", legal_inquiry_node)
 workflow.add_node("chit_chat_node", chit_chat_node)
@@ -54,16 +65,26 @@ workflow.add_node("cancel_node", cancel_node)
 
 
 # 엣지(연결) 설정
-workflow.set_entry_point("classify_intent_node")
+workflow.set_entry_point("route_request_node")
 
-# 의도 분류 및 확인 응답 처리가 끝난 후, 결과에 따라 분기
+# 1. 메인 라우터에서 각 상황에 맞게 분기
+workflow.add_conditional_edges(
+    "route_request_node",
+    main_router,
+    {
+        "classify_intent_node": "classify_intent_node",
+        "template_generation_node": "template_generation_node",
+        "cancel_node": "cancel_node",
+        "template_confirmation_node": "template_confirmation_node",
+    }
+)
+
+# 2. 의도 분류 노드는 이제 새로운 요청만 처리
 workflow.add_conditional_edges(
     "classify_intent_node",
     route_by_intent,
     {
         "template_confirmation_node": "template_confirmation_node",
-        "template_generation_node": "template_generation_node",
-        "cancel_node": "cancel_node",
         "legal_inquiry_node": "legal_inquiry_node",
         "chit_chat_node": "chit_chat_node",
         "anomalous_request_node": "anomalous_request_node",
@@ -71,8 +92,7 @@ workflow.add_conditional_edges(
     }
 )
 
-# 확인/취소/생성 등 단일 행동 노드는 실행 후 종료됨
-# 확인 노드는 사용자 입력을 기다리기 위해 일단 종료
+# 3. 각 기능 노드는 실행 후 종료
 workflow.add_edge("template_confirmation_node", END)
 workflow.add_edge("cancel_node", END)
 workflow.add_edge("legal_inquiry_node", END)

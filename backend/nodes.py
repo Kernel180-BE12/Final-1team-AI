@@ -6,8 +6,8 @@ from typing import Literal
 
 from state import GraphState, Intent
 from chatbot_logic import (
-    initialize_system, 
-    process_chat_message, 
+    initialize_system,
+    process_chat_message,
     retrievers
 )
 
@@ -27,19 +27,13 @@ class IntentClassifier(BaseModel):
 
 # --- 노드 함수 정의 ---
 
-def classify_intent_node(state: GraphState) -> GraphState:
-    """대화 상태를 확인하여 다음 단계를 결정하거나, 새로운 요청의 의도를 분류합니다."""
-    if state.get("next_action") == "awaiting_confirmation":
-        print("--- 확인 응답 처리 ---")
-        user_message = state.get("original_request", "").strip()
-        if user_message == "예":
-            state["intent"] = "user_confirmed"
-        elif user_message == "아니오":
-            state["intent"] = "user_denied"
-        else:
-            state["intent"] = "confirmation_invalid"
-        return state
+def route_request_node(state: GraphState) -> GraphState:
+    """그래프의 진입점으로, 상태를 변경하지 않고 라우팅 엣지의 시작점 역할을 합니다."""
+    print("--- 메인 라우터 진입 ---")
+    return state
 
+def classify_intent_node(state: GraphState) -> GraphState:
+    """사용자의 새로운 요청 의도를 분류합니다. (단순화된 버전)"""
     print("--- 노드 실행: 의도 분류 ---")
     prompt = ChatPromptTemplate.from_template(
         "당신은 사용자의 메시지를 분석하여 가장 적절한 의도를 분류하는 전문가입니다. 사용자의 메시지에 대한 의도를 JSON 형식으로만 답변해주세요.\n사용자 메시지: {request}"
@@ -58,13 +52,9 @@ def classify_intent_node(state: GraphState) -> GraphState:
 def template_confirmation_node(state: GraphState) -> GraphState:
     """템플릿 생성 의도일 경우, 사용자에게 진행 여부를 확인하고 원래 요청을 저장합니다."""
     print("--- 노드 실행: 템플릿 생성 확인 ---")
-    
-    # ▼▼▼ [수정된 부분] 확인 질문 전에, 원래 요청을 파이프라인 상태에 저장합니다. ▼▼▼
     pipeline_state = state.get("template_pipeline_state", {'step': 'initial'})
     pipeline_state['original_request'] = state['original_request']
     state['template_pipeline_state'] = pipeline_state
-    # ▲▲▲ 여기까지 수정 ▲▲▲
-
     message = "템플릿 생성을 요청하셨네요. 계속 진행할까요?"
     options = ["예", "아니오"]
     state["final_response"] = {"message": message, "options": options}
@@ -82,7 +72,6 @@ def cancel_node(state: GraphState) -> GraphState:
 
 def legal_inquiry_node(state: GraphState) -> GraphState:
     """법률/가이드라인 정보를 검색하고 답변을 생성합니다."""
-    # ... (내용 변경 없음)
     print("--- 노드 실행: 법률/가이드라인 안내 ---")
     query = state["original_request"]
     if not retrievers or 'compliance' not in retrievers or not retrievers['compliance']:
@@ -114,7 +103,6 @@ def legal_inquiry_node(state: GraphState) -> GraphState:
 
 def chit_chat_node(state: GraphState) -> GraphState:
     """일상 대화에 대한 답변을 생성합니다."""
-    # ... (내용 변경 없음)
     print("--- 노드 실행: 일상 대화 ---")
     prompt = ChatPromptTemplate.from_template(
         "당신은 사용자의 비즈니스 메시징 업무를 돕는 친절하고 전문적인 AI 어시스턴트 'Manus'입니다. 사용자의 일상적인 대화에 대해 자연스럽고 긍정적으로 답변해주세요.\n사용자 메시지: {request}"
@@ -131,7 +119,6 @@ def chit_chat_node(state: GraphState) -> GraphState:
 
 def anomalous_request_node(state: GraphState) -> GraphState:
     """이상한 요청에 대해 정중하게 거절하는 답변을 생성합니다."""
-    # ... (내용 변경 없음)
     print("--- 노드 실행: 이상한 요청 처리 ---")
     answer = (
         "죄송합니다. 요청하신 내용은 비윤리적이거나 시스템의 목적과 맞지 않아 처리할 수 없습니다. "
@@ -143,7 +130,6 @@ def anomalous_request_node(state: GraphState) -> GraphState:
 
 def template_generation_node(state: GraphState) -> GraphState:
     """템플릿 생성의 모든 단계를 처리하는 노드."""
-    # ... (내용 변경 없음)
     print("--- 노드 실행: 템플릿 생성 파이프라인 ---")
     try:
         response_data = process_chat_message(
@@ -156,7 +142,7 @@ def template_generation_node(state: GraphState) -> GraphState:
         if "step" in updated_pipeline_state:
             state["next_action"] = updated_pipeline_state["step"]
         else:
-            state["next_action"] = None 
+            state["next_action"] = None
     except Exception as e:
         print(f"오류: 템플릿 생성 중 오류 발생 - {e}")
         state["error"] = f"템플릿 생성 중 오류 발생: {e}"

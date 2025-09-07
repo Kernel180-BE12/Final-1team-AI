@@ -376,12 +376,14 @@ def process_chat_message(message: str, state: dict) -> dict:
                 return process_chat_message(message, state)
 
             elif message.startswith('새로 만들기'):
-                style = '기본형'
-                if '이미지형' in message: style = '이미지형'
-                elif '아이템리스트형' in message: style = '아이템리스트형'
-                state['selected_style'] = style
-                state['step'] = 'generate_and_validate'
-                return process_chat_message(message, state)
+                state['step'] = 'select_style'
+                # 다음 단계로 바로 진입하는 것이 아니라, 스타일 선택을 요청하는 메시지를 반환해야 합니다.
+                return {
+                    'message': '새로운 템플릿을 생성합니다. 원하시는 스타일을 선택해주세요.',
+                    'state': state,
+                    'options': ['기본형', '이미지형', '아이템리스트형']
+                }
+
 
             elif message == '실행 취소':
                 state['step'] = 'initial'
@@ -392,13 +394,18 @@ def process_chat_message(message: str, state: dict) -> dict:
                 return {'message': '선택이 올바르지 않습니다. 초기 단계로 돌아갑니다. 다시 요청해주세요.', 'state': {'step': 'initial'}}
 
         # ... (이하 함수 내용 변경 없음) ...
-        if state.get('step') == 'select_style':
-            if message in ['기본형', '이미지형', '아이템리스트형']:
-                state['selected_style'] = message
+        elif state.get("step") == "select_style":
+            if message in ["기본형", "이미지형", "아이템리스트형"]:
+                state["selected_style"] = message
+                state["step"] = "generate_and_validate"
+                return process_chat_message(message, state)
             else:
-                state['selected_style'] = '기본형'
-            state['step'] = 'generate_and_validate'
-            return process_chat_message(message, state)
+                # 유효하지 않은 스타일 선택 시 다시 스타일 선택을 요청
+                return {
+                    "message": "선택하신 스타일이 유효하지 않습니다. '기본형', '이미지형', '아이템리스트형' 중 하나를 선택해주세요.",
+                    "state": state,
+                    "options": ["기본형", "이미지형", "아이템리스트형"]
+                }
 
         if state.get('step') == 'generate_and_validate':
             if 'selected_template' in state and state['selected_template']:
