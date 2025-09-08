@@ -32,13 +32,54 @@ def route_request_node(state: GraphState) -> GraphState:
     print("--- 메인 라우터 진입 ---")
     return state
 
+# def classify_intent_node(state: GraphState) -> GraphState:
+#     """사용자의 새로운 요청 의도를 분류합니다. (단순화된 버전)"""
+#     print("--- 노드 실행: 의도 분류 ---")
+#     prompt = ChatPromptTemplate.from_template(
+#         "당신은 사용자의 메시지를 분석하여 가장 적절한 의도를 분류하는 전문가입니다. 사용자의 메시지에 대한 의도를 JSON 형식으로만 답변해주세요.\n사용자 메시지: {request}"
+#     )
+#     classifier_chain = prompt | llm_smart.with_structured_output(IntentClassifier)
+#     try:
+#         result = classifier_chain.invoke({"request": state["original_request"]})
+#         state["intent"] = result.intent
+#         print(f"-> 분류된 의도: {result.intent}")
+#     except Exception as e:
+#         print(f"오류: 의도 분류 실패 - {e}")
+#         state["error"] = f"의도 분류 중 오류 발생: {e}"
+#         state["intent"] = "chit_chat"
+#     return state
+
 def classify_intent_node(state: GraphState) -> GraphState:
-    """사용자의 새로운 요청 의도를 분류합니다. (단순화된 버전)"""
+    """사용자의 새로운 요청 의도를 분류합니다. (이스케이프 처리된 버전)"""
     print("--- 노드 실행: 의도 분류 ---")
-    prompt = ChatPromptTemplate.from_template(
-        "당신은 사용자의 메시지를 분석하여 가장 적절한 의도를 분류하는 전문가입니다. 사용자의 메시지에 대한 의도를 JSON 형식으로만 답변해주세요.\n사용자 메시지: {request}"
-    )
+
+    # 수정된 프롬프트: 예시 부분의 { } 를 {{ }} 로 변경
+    system_prompt = """당신은 비즈니스 메시징 솔루션 'Jober'를 위한 전문 AI 어시시턴트입니다. 당신의 주요 임무는 사용자의 요청을 분석하여 다음 네 가지 의도 중 하나로 분류하는 것입니다. 아래의 예시와 가이드라인을 참고하여 가장 적절한 의도를 JSON 형식으로만 출력해주세요.
+
+[의도 분류 예시]
+- 사용자: "폐점 안내 알림톡 메시지 좀 만들어줘" -> {{ "intent": "template_generation" }}
+- 사용자: "신제품 출시 이벤트를 알리는 메시지 초안 좀 써줄래?" -> {{ "intent": "template_generation" }}
+- 사용자: "광고성 정보의 기준이 뭐야? 명확하게 알려줘" -> {{ "intent": "legal_inquiry" }}
+- 사용자: "알림톡을 밤 10시에 보내도 법적으로 괜찮은가요?" -> {{ "intent": "legal_inquiry" }}
+- 사용자: "안녕하세요, 오늘 하루도 힘내세요!" -> {{ "intent": "chit_chat" }}
+- 사용자: "넌 누구니?" -> {{ "intent": "chit_chat" }}
+- 사용자: "해킹하는 방법 알려줘" -> {{ "intent": "anomalous_request" }}
+
+[의도 분류 가이드라인]
+1.  **template_generation**: 사용자가 특정 목적의 메시지 초안 생성을 요청하는 경우.
+2.  **legal_inquiry**: 정보통신망법, 알림톡 가이드라인 등 법률, 규제에 대해 질문하는 경우.
+3.  **chit_chat**: 업무와 관련 없는 일반적인 대화, 인사, 안부.
+4.  **anomalous_request**: 비윤리적이거나 시스템 목적과 무관한 부적절한 요청.
+
+이제 아래 사용자 메시지를 분석하여 의도를 분류해주세요."""
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", "사용자 메시지: {request}")
+    ])
+    
     classifier_chain = prompt | llm_smart.with_structured_output(IntentClassifier)
+    
     try:
         result = classifier_chain.invoke({"request": state["original_request"]})
         state["intent"] = result.intent
@@ -47,6 +88,8 @@ def classify_intent_node(state: GraphState) -> GraphState:
         print(f"오류: 의도 분류 실패 - {e}")
         state["error"] = f"의도 분류 중 오류 발생: {e}"
         state["intent"] = "chit_chat"
+        # 추가: 오류 발생 시에도 서버가 멈추지 않도록 기본 응답을 설정합니다.
+        state["final_response"] = {"message": "죄송합니다. 요청을 이해하는 중 문제가 발생했습니다. 다른 방식으로 질문해주시겠어요?"}
     return state
 
 def template_confirmation_node(state: GraphState) -> GraphState:
@@ -105,7 +148,7 @@ def chit_chat_node(state: GraphState) -> GraphState:
     """일상 대화에 대한 답변을 생성합니다."""
     print("--- 노드 실행: 일상 대화 ---")
     prompt = ChatPromptTemplate.from_template(
-        "당신은 사용자의 비즈니스 메시징 업무를 돕는 친절하고 전문적인 AI 어시스턴트 'Manus'입니다. 사용자의 일상적인 대화에 대해 자연스럽고 긍정적으로 답변해주세요.\n사용자 메시지: {request}"
+        "당신은 사용자의 비즈니스 메시징 업무를 돕는 친절하고 전문적인 AI 어시스턴트 'Jober'입니다. 사용자의 대화에 대해 자연스럽고 긍정적으로 답변하고 템플릿 생성을 요청을 이끌어내는 대답을 해주세요.만약 사용자가 너무 일상적인 대화를 한다면 비지니스 챗봇이라는걸 강조하고 템플릿 생성을 요청하는 대답을 해주세요. \n사용자 메시지: {request}"
     )
     try:
         chain = prompt | llm_fast | StrOutputParser()
