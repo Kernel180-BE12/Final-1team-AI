@@ -50,26 +50,42 @@ def route_request_node(state: GraphState) -> GraphState:
 #     return state
 
 def classify_intent_node(state: GraphState) -> GraphState:
-    """사용자의 새로운 요청 의도를 분류합니다. (이스케이프 처리된 버전)"""
+    """사용자의 새로운 요청 의도를 분류합니다. (개선된 프롬프트)"""
     print("--- 노드 실행: 의도 분류 ---")
 
-    # 수정된 프롬프트: 예시 부분의 { } 를 {{ }} 로 변경
-    system_prompt = """당신은 비즈니스 메시징 솔루션 'Jober'를 위한 전문 AI 어시시턴트입니다. 당신의 주요 임무는 사용자의 요청을 분석하여 다음 네 가지 의도 중 하나로 분류하는 것입니다. 아래의 예시와 가이드라인을 참고하여 가장 적절한 의도를 JSON 형식으로만 출력해주세요.
-
-[의도 분류 예시]
-- 사용자: "폐점 안내 알림톡 메시지 좀 만들어줘" -> {{ "intent": "template_generation" }}
-- 사용자: "신제품 출시 이벤트를 알리는 메시지 초안 좀 써줄래?" -> {{ "intent": "template_generation" }}
-- 사용자: "광고성 정보의 기준이 뭐야? 명확하게 알려줘" -> {{ "intent": "legal_inquiry" }}
-- 사용자: "알림톡을 밤 10시에 보내도 법적으로 괜찮은가요?" -> {{ "intent": "legal_inquiry" }}
-- 사용자: "안녕하세요, 오늘 하루도 힘내세요!" -> {{ "intent": "chit_chat" }}
-- 사용자: "넌 누구니?" -> {{ "intent": "chit_chat" }}
-- 사용자: "해킹하는 방법 알려줘" -> {{ "intent": "anomalous_request" }}
+    # --- 수정된 프롬프트 ---
+    system_prompt = """당신은 비즈니스 메시징 솔루션 'Jober'의 전문 AI 어시스턴트입니다. 당신의 주요 임무는 사용자의 요청을 분석하여 다음 네 가지 의도 중 하나로 분류하는 것입니다. 아래의 가이드라인과 예시를 참고하여 가장 적절한 의도를 JSON 형식으로만 출력해주세요.
 
 [의도 분류 가이드라인]
-1.  **template_generation**: 사용자가 특정 목적의 메시지 초안 생성을 요청하는 경우.
-2.  **legal_inquiry**: 정보통신망법, 알림톡 가이드라인 등 법률, 규제에 대해 질문하는 경우.
-3.  **chit_chat**: 업무와 관련 없는 일반적인 대화, 인사, 안부.
-4.  **anomalous_request**: 비윤리적이거나 시스템 목적과 무관한 부적절한 요청.
+1.  **template_generation (템플릿 생성)**: 사용자가 메시지 생성을 명시적으로 요청하거나, 특정 내용/초안/예시를 제공하며 템플릿 생성을 암시하는 경우.
+2.  **legal_inquiry (법률 문의)**: 정보통신망법, 알림톡 가이드라인 등 법률, 규제에 대해 질문하는 경우.
+3.  **chit_chat (일상 대화)**: 업무와 관련 없는 일반적인 대화, 인사, 안부. 단, 메시지 예시를 포함한 인사는 'template_generation'으로 분류.
+4.  **anomalous_request (이상 요청)**: 비윤리적이거나 시스템 목적과 무관한 부적절한 요청.
+
+[의도 분류 예시]
+# --- Template Generation Examples ---
+- 사용자: "병원 예약 하루 전날 보내는 리마인드 메시지 좀" -> {{ "intent": "template_generation" }}
+- 사용자: "결제 완료되면 나가는 메시지 초안" -> {{ "intent": "template_generation" }}
+- 사용자: (별다른 설명 없이 내용만 입력)
+    [Web발신]
+    고객님, 주문하신 상품의 배송이 시작되었습니다.
+    운송장번호: 123456789
+    -> {{ "intent": "template_generation" }}
+- 사용자: "이걸로 알림톡 보내려고요. 안녕하세요. 마케팅리즈입니다. 9월 신규 고객 대상 할인 쿠폰이 발급되었습니다." -> {{ "intent": "template_generation" }}
+
+# --- Legal Inquiry Examples ---
+- 사용자: "광고 메시지는 밤 9시 이후에 보내면 안된다고 들었는데 맞나요?" -> {{ "intent": "legal_inquiry" }}
+- 사용자: "이벤트 안내 메시지 보낼 때 수신거부 방법도 꼭 넣어야 하는지 궁금합니다." -> {{ "intent": "legal_inquiry" }}
+- 사용자: "회원가입만 한 고객에게 마케팅 메시지를 보내도 법적으로 문제가 없나요?" -> {{ "intent": "legal_inquiry" }}
+
+# --- Chit-chat Examples ---
+- 사용자: "고마워요!" -> {{ "intent": "chit_chat" }}
+- 사용자: "Jober 똑똑한데?" -> {{ "intent": "chit_chat" }}
+- 사용자: "마케팅 특강 공지를 해야 하는데..." -> {{ "intent": "chit_chat" }}
+
+# --- Anomalous Request Examples ---
+- 사용자: "경쟁사 서비스가 안 좋다는 내용의 메시지를 대량으로 보내줘." -> {{ "intent": "anomalous_request" }}
+- 사용자: "오늘 저녁 메뉴 추천해줘." -> {{ "intent": "anomalous_request" }}
 
 이제 아래 사용자 메시지를 분석하여 의도를 분류해주세요."""
 
@@ -88,9 +104,10 @@ def classify_intent_node(state: GraphState) -> GraphState:
         print(f"오류: 의도 분류 실패 - {e}")
         state["error"] = f"의도 분류 중 오류 발생: {e}"
         state["intent"] = "chit_chat"
-        # 추가: 오류 발생 시에도 서버가 멈추지 않도록 기본 응답을 설정합니다.
         state["final_response"] = {"message": "죄송합니다. 요청을 이해하는 중 문제가 발생했습니다. 다른 방식으로 질문해주시겠어요?"}
     return state
+
+
 
 def template_confirmation_node(state: GraphState) -> GraphState:
     """템플릿 생성 의도일 경우, 사용자에게 진행 여부를 확인하고 원래 요청을 저장합니다."""
