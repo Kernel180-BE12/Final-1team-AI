@@ -130,35 +130,99 @@ def cancel_node(state: GraphState) -> GraphState:
     state["final_response"] = {"message": message, "options": []}
     return state
 
+# def legal_inquiry_node(state: GraphState) -> GraphState:
+#     """법률/가이드라인 정보를 검색하고 답변을 생성합니다."""
+#     print("--- 노드 실행: 법률/가이드라인 안내 ---")
+#     query = state["original_request"]
+#     if not retrievers or 'compliance' not in retrievers or not retrievers['compliance']:
+#         state["final_response"] = {"message": "죄송합니다. 법률 정보 데이터베이스가 현재 준비되지 않아 답변할 수 없습니다."}
+#         state["error"] = "Compliance retriever not initialized or found."
+#         return state
+#     try:
+#         docs = retrievers['compliance'].invoke(query)
+#         context = "\n\n".join([f"문서 {i+1}:\n{doc.page_content}" for i, doc in enumerate(docs)])
+#         state["retrieved_docs"] = [doc.page_content for doc in docs]
+#         prompt = ChatPromptTemplate.from_template(
+#             """당신은 정보통신망법 및 알림톡 가이드라인 전문가입니다.
+#             아래에 제공된 '관련 규정'만을 근거로 사용자의 질문에 대해 정확하고 명료하게 답변해주세요.
+#             답변 시, 어떤 규정을 근거로 하였는지 간략히 언급해주세요. 추측성 답변은 절대 금지입니다.
+#             [관련 규정]
+#             {context}
+#             [사용자 질문]
+#             {query}
+#             [전문가 답변]"""
+#         )
+#         response_chain = prompt | llm_smart | StrOutputParser()
+#         answer = response_chain.invoke({"context": context, "query": query})
+#         state["final_response"] = {"message": answer}
+#     except Exception as e:
+#         print(f"오류: 법률/가이드라인 안내 중 오류 발생 - {e}")
+#         state["error"] = f"법률/가이드라인 안내 중 오류 발생: {e}"
+#         state["final_response"] = {"message": "죄송합니다. 법률 정보를 처리하는 중 오류가 발생했습니다."}
+#     return state
+
 def legal_inquiry_node(state: GraphState) -> GraphState:
-    """법률/가이드라인 정보를 검색하고 답변을 생성합니다."""
+    """법률/가이드라인 정보를 검색하고 답변을 생성합니다. (compliance 및 generation 리트리버 모두 활용)"""
     print("--- 노드 실행: 법률/가이드라인 안내 ---")
     query = state["original_request"]
-    if not retrievers or 'compliance' not in retrievers or not retrievers['compliance']:
-        state["final_response"] = {"message": "죄송합니다. 법률 정보 데이터베이스가 현재 준비되지 않아 답변할 수 없습니다."}
-        state["error"] = "Compliance retriever not initialized or found."
+
+    # 사용 가능한 리트리버 확인
+    compliance_retriever = retrievers.get('compliance')
+    generation_retriever = retrievers.get('generation')
+
+    if not compliance_retriever and not generation_retriever:
+        state["final_response"] = {"message": "죄송합니다. 법률 또는 생성 가이드라인 정보 데이터베이스가 현재 준비되지 않아 답변할 수 없습니다."}
+        state["error"] = "Compliance and generation retrievers not initialized or found."
         return state
+
     try:
-        docs = retrievers['compliance'].invoke(query)
-        context = "\n\n".join([f"문서 {i+1}:\n{doc.page_content}" for i, doc in enumerate(docs)])
-        state["retrieved_docs"] = [doc.page_content for doc in docs]
+        all_docs = []
+        # 'compliance' 리트리버에서 문서 검색
+        if compliance_retriever:
+            print("-> compliance 리트리버에서 정보 검색 중...")
+            docs_compliance = compliance_retriever.invoke(query)
+            all_docs.extend(docs_compliance)
+            print(f"-> compliance 문서 {len(docs_compliance)}개 검색 완료.")
+
+        # 'generation' 리트리버에서 문서 검색
+        if generation_retriever:
+            print("-> generation 리트리버에서 정보 검색 중...")
+            docs_generation = generation_retriever.invoke(query)
+            all_docs.extend(docs_generation)
+            print(f"-> generation 문서 {len(docs_generation)}개 검색 완료.")
+
+        # 검색된 문서들의 중복 제거 (내용 기준)
+        unique_docs = list({doc.page_content: doc for doc in all_docs}.values())
+        print(f"-> 총 {len(all_docs)}개 문서 검색, 중복 제거 후 {len(unique_docs)}개 문서 확보.")
+
+        context = "\n\n".join([f"문서 {i+1}:\n{doc.page_content}" for i, doc in enumerate(unique_docs)])
+        state["retrieved_docs"] = [doc.page_content for doc in unique_docs]
+
+        # 프롬프트 수정: 더 포괄적인 전문가 역할 부여
         prompt = ChatPromptTemplate.from_template(
-            """당신은 정보통신망법 및 알림톡 가이드라인 전문가입니다.
-            아래에 제공된 '관련 규정'만을 근거로 사용자의 질문에 대해 정확하고 명료하게 답변해주세요.
-            답변 시, 어떤 규정을 근거로 하였는지 간략히 언급해주세요. 추측성 답변은 절대 금지입니다.
-            [관련 규정]
+            """당신은 정보통신망법, 알림톡 가이드라인, 효과적인 메시지 작성법 등 비즈니스 메시징 규정 및 가이드라인 전문가입니다.
+            아래에 제공된 '관련 규정 및 가이드'만을 근거로 사용자의 질문에 대해 정확하고 명료하게 답변해주세요.
+            답변 시, 어떤 자료를 근거로 하였는지 간략히 언급해주세요. 추측성 답변은 절대 금지입니다.
+            만약 관련 정보가 없다면, 정보가 없다고 솔직하게 답변해주세요.
+
+            [관련 규정 및 가이드]
             {context}
+
             [사용자 질문]
             {query}
+
             [전문가 답변]"""
         )
+        
         response_chain = prompt | llm_smart | StrOutputParser()
         answer = response_chain.invoke({"context": context, "query": query})
         state["final_response"] = {"message": answer}
+
     except Exception as e:
         print(f"오류: 법률/가이드라인 안내 중 오류 발생 - {e}")
         state["error"] = f"법률/가이드라인 안내 중 오류 발생: {e}"
-        state["final_response"] = {"message": "죄송합니다. 법률 정보를 처리하는 중 오류가 발생했습니다."}
+        state["final_response"] = {"message": "죄송합니다. 관련 정보를 처리하는 중 오류가 발생했습니다."}
+    
     return state
 
 def chit_chat_node(state: GraphState) -> GraphState:
