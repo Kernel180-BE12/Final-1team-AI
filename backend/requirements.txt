@@ -8,3 +8,4 @@ flashrank==0.2.10
 rank_bm25==0.2.2
 fastapi[all]
 uvicorn
+gunicorn
