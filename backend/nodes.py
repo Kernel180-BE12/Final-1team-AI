@@ -32,23 +32,6 @@ def route_request_node(state: GraphState) -> GraphState:
     print("--- 메인 라우터 진입 ---")
     return state
 
-# def classify_intent_node(state: GraphState) -> GraphState:
-#     """사용자의 새로운 요청 의도를 분류합니다. (단순화된 버전)"""
-#     print("--- 노드 실행: 의도 분류 ---")
-#     prompt = ChatPromptTemplate.from_template(
-#         "당신은 사용자의 메시지를 분석하여 가장 적절한 의도를 분류하는 전문가입니다. 사용자의 메시지에 대한 의도를 JSON 형식으로만 답변해주세요.\n사용자 메시지: {request}"
-#     )
-#     classifier_chain = prompt | llm_smart.with_structured_output(IntentClassifier)
-#     try:
-#         result = classifier_chain.invoke({"request": state["original_request"]})
-#         state["intent"] = result.intent
-#         print(f"-> 분류된 의도: {result.intent}")
-#     except Exception as e:
-#         print(f"오류: 의도 분류 실패 - {e}")
-#         state["error"] = f"의도 분류 중 오류 발생: {e}"
-#         state["intent"] = "chit_chat"
-#     return state
-
 def classify_intent_node(state: GraphState) -> GraphState:
     """사용자의 새로운 요청 의도를 분류합니다. (개선된 프롬프트)"""
     print("--- 노드 실행: 의도 분류 ---")
@@ -129,37 +112,6 @@ def cancel_node(state: GraphState) -> GraphState:
     state["next_action"] = None
     state["final_response"] = {"message": message, "options": []}
     return state
-
-# def legal_inquiry_node(state: GraphState) -> GraphState:
-#     """법률/가이드라인 정보를 검색하고 답변을 생성합니다."""
-#     print("--- 노드 실행: 법률/가이드라인 안내 ---")
-#     query = state["original_request"]
-#     if not retrievers or 'compliance' not in retrievers or not retrievers['compliance']:
-#         state["final_response"] = {"message": "죄송합니다. 법률 정보 데이터베이스가 현재 준비되지 않아 답변할 수 없습니다."}
-#         state["error"] = "Compliance retriever not initialized or found."
-#         return state
-#     try:
-#         docs = retrievers['compliance'].invoke(query)
-#         context = "\n\n".join([f"문서 {i+1}:\n{doc.page_content}" for i, doc in enumerate(docs)])
-#         state["retrieved_docs"] = [doc.page_content for doc in docs]
-#         prompt = ChatPromptTemplate.from_template(
-#             """당신은 정보통신망법 및 알림톡 가이드라인 전문가입니다.
-#             아래에 제공된 '관련 규정'만을 근거로 사용자의 질문에 대해 정확하고 명료하게 답변해주세요.
-#             답변 시, 어떤 규정을 근거로 하였는지 간략히 언급해주세요. 추측성 답변은 절대 금지입니다.
-#             [관련 규정]
-#             {context}
-#             [사용자 질문]
-#             {query}
-#             [전문가 답변]"""
-#         )
-#         response_chain = prompt | llm_smart | StrOutputParser()
-#         answer = response_chain.invoke({"context": context, "query": query})
-#         state["final_response"] = {"message": answer}
-#     except Exception as e:
-#         print(f"오류: 법률/가이드라인 안내 중 오류 발생 - {e}")
-#         state["error"] = f"법률/가이드라인 안내 중 오류 발생: {e}"
-#         state["final_response"] = {"message": "죄송합니다. 법률 정보를 처리하는 중 오류가 발생했습니다."}
-#     return state
 
 def legal_inquiry_node(state: GraphState) -> GraphState:
     """법률/가이드라인 정보를 검색하고 답변을 생성합니다. (compliance 및 generation 리트리버 모두 활용)"""
