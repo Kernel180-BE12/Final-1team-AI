@@ -8,6 +8,7 @@ class GraphState(TypedDict):
     그래프의 모든 노드에서 공유되는 상태 객체입니다.
     대화의 모든 정보를 포함합니다.
     """
+    
     # --- 입력 및 분류 ---
     original_request: str               # 사용자의 최초 입력 메시지
     intent: Optional[Intent]            # 분류된 사용자의 의도
