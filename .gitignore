@@ -21,3 +21,5 @@ Thumbs.db
 *.egg-info/
 dist/
 build/
+
+vector_db
