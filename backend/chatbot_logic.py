@@ -730,7 +730,7 @@ Create a ready-to-use Alimtalk template draft that reflects the user's request, 
 '''
         )
 
-        chain = prompt | llm_reasoning | StrOutputParser()
+        chain = prompt | llm_fast| StrOutputParser()
         template = chain.invoke({
             "request": request,
             "style": style,
