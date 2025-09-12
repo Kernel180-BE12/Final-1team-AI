@@ -418,8 +418,12 @@ def process_chat_message(message: str, state: dict) -> dict:
         elif state.get("step") == "select_style":
             if message in ["기본형", "이미지형", "아이템리스트형"]:
                 state["selected_style"] = message
-                if message == "이미지형" or "기본형":
+                if message == "이미지형":
                     state["hasImage"] = True
+                    state["step"] = "generate_and_validate"
+                    return process_chat_message(message, state)
+                elif message == "기본형":
+                    state["hasImage"] = False
                     state["step"] = "generate_and_validate"
                     return process_chat_message(message, state)
                 else:
@@ -566,81 +570,6 @@ def fill_template_with_request(template: str, request: str) -> str:
         print(f"Error in fill_template_with_request: {e}")
         return template
 
-# def generate_template(request: str, style: str = "기본형") -> str:
-#     try:
-#         RULES = {
-#             "공통": '''
-#         - GEN-PREVIEW-001 (미리보기 메시지 제한): 채팅방 리스트와 푸시에 노출되는 문구. 한/영 구분 없이 40자까지 입력 가능. 변수 작성 불가.
-#         - GEN-REVIEW-001 (심사 기본 원칙): 알림톡은 정보통신망법과 카카오 내부 기준에 따라 심사되며, 승인된 템플릿만 발송 가능.
-#         - GEN-REVIEW-002 (주요 반려 사유): 변수 오류, 과도한 변수(40개 초과) 사용, 변수로만 이루어진 템플릿, 변수가 포함된 버튼명, 변수가 포함된 미리보기 메시지 설정 시 반려됨.
-#         - GEN-INFO-DEF-001 (정보성 메시지의 정의): 고객의 요청에 의한 1회성 정보, 거래 확인, 계약 변경 안내 등이 포함됨. 부수적으로 광고가 포함되면 전체가 광고성 정보로 간주됨.
-#         - GEN-SERVICE-STD-001 (알림톡 서비스 기준): 알림톡은 수신자에게 반드시 전달되어야 하는 '정형화된 정보성' 메시지에 한함.
-#         - GEN-BLACKLIST-001 (블랙리스트 - 포인트/쿠폰): 수신자 동의 없는 포인트 적립/소멸 메시지, 유효기간이 매우 짧은 쿠폰 등은 발송 불가.
-#         - GEN-BLACKLIST-002 (블랙리스트 - 사용자 행동 기반): 장바구니 상품 안내, 클릭했던 상품 안내, 생일 축하 메시지, 앱 다운로드 유도 등은 발송 불가.
-#         - GEN-GUIDE-001 (정보성/광고성 판단 기준): 특가/할인 상품 안내, 프로모션 또는 이벤트가 혼재된 경우는 광고성 메시지로 판단됨.
-#         ''',
-#             "기본형": {
-#                 "규칙": '''
-#         - GEN-TYPE-001 (기본형 특징 및 제한): 고객에게 반드시 전달되어야 하는 정보성 메시지. 한/영 구분 없이 1,000자까지 입력 가능하며, 개인화된 텍스트 영역은 #{변수}로 작성.
-#         - GEN-TYPE-002 (부가 정보형 특징 및 제한): 고정적인 부가 정보를 본문 하단에 안내. 최대 500자, 변수 사용 불가, URL 포함 가능. 본문과 합쳐 총 1,000자 초과 불가.
-#         - GEN-TYPE-003 (채널추가형 특징 및 제한): 비광고성 메시지 하단에 채널 추가 유도. 안내 멘트는 최대 80자, 변수/URL 포함 불가.
-#         ''',
-#                 "스타일 가이드": '''
-#         # 스타일 설명: 텍스트 중심으로 정보를 전달하는 가장 기본적인 템플릿입니다. 간결하고 직관적인 구성으로 공지, 안내, 상태 변경 등 명확한 내용 전달에 사용됩니다.
-#         # 대표 예시 1 (서비스 완료 안내)
-#         안녕하세요, #{수신자명}님. 요청하신 #{서비스} 처리가 완료되었습니다. 자세한 내용은 아래 버튼을 통해 확인해주세요.
-#         # 대표 예시 2 (예약 리마인드)
-#         안녕하세요, #{수신자명}님. 내일(#{예약일시})에 예약하신 서비스가 예정되어 있습니다. 잊지 말고 방문해주세요.
-#         '''
-#             },
-#             "이미지형": {
-#                 "규칙": '''
-#         - GEN-STYLE-001 (이미지형 특징 및 제한): 포맷화된 정보성 메시지를 시각적으로 안내. 광고성 내용 포함 불가. 템플릿 당 하나의 고정된 이미지만 사용 가능.
-#         - GEN-STYLE-002 (이미지형 제작 가이드 - 사이즈): 권장 사이즈는 800x400px (JPG, PNG), 최대 500KB.
-#         - GEN-STYLE-009 (이미지 저작권 및 내용 제한): 타인의 지적재산권, 초상권을 침해하는 이미지, 본문과 관련 없는 이미지, 광고성 이미지는 절대 사용 불가.
-#         ''',
-#                 "스타일 가이드": '''
-#         # 스타일 설명: 시각적 요소를 활용하여 사용자의 시선을 끌고 정보를 효과적으로 전달하는 템플릿입니다. 상품 홍보, 이벤트 안내 등 시각적 임팩트가 중요할 때 사용됩니다.
-#         # 대표 예시 1 (신상품 출시)
-#         (이미지 영역: 새로 출시된 화장품 라인업)
-#         '''
-#             }
-#         }
-#         generation_rules = retrievers.get('generation').invoke(request)
-#         formatted_rules = "\n".join([f"- {doc.metadata.get('rule_id', 'Unknown')}: {doc.page_content}" for doc in generation_rules])
-#         prompt = ChatPromptTemplate.from_template(
-#             '''당신은 사용자의 요청과 주어진 규칙에 따라 알림톡 템플릿을 생성하는 전문 카피라이터입니다.
-#             # 최종 목표: 사용자의 요청사항을 반영하여, 선택된 스타일과 모든 규칙을 준수하는 완벽한 템플릿 초안을 생성하세요.
-#             # 사용자의 원본 요청:
-#             "{request}"
-#             # 적용할 스타일: {style}
-#             {style_guide}
-#             # 반드시 준수해야 할 규칙:
-#             {rules}
-#             # 지시사항:
-#             1. 먼저 사용자의 요청을 깊이 이해하고 핵심 목적을 파악합니다.
-#             2. 선택된 스타일의 특징과 예시를 참고하여 전체적인 구조를 잡습니다.
-#             3. 모든 규칙을 하나도 빠짐없이 확인하고, 위반되지 않도록 템플릿을 작성합니다.
-#             4. 바뀔 수 있는 부분(고객명, 날짜, 상품명 등)은 `#{{변수명}}` 형식으로 만듭니다.
-#             5. 최종 결과물은 템플릿 텍스트만 출력해야 합니다. 다른 어떤 설명도 추가하지 마세요.
-#             # 생성된 템플릿 초안:
-#             '''
-
-#         )
-#         chain = prompt | llm_reasoning | StrOutputParser()
-#         template = chain.invoke({
-#             "request": request,
-#             "style": style,
-#             "style_guide": RULES.get(style, {}).get("스타일 가이드", ""),
-#             "rules": f'{RULES["공통"]}\n{RULES.get(style, {}).get("규칙", "")}\n관련 규칙:\n{formatted_rules}'
-#         })
-#         return template.strip()
-#     except Exception as e:
-#         print(f"Error in generate_template: {e}")
-#         return f"템플릿 생성 중 오류 발생: {request}"
-
-# 수정된 프롬프트가 적용된 generate_template 함수
-
 def generate_template(request: str, style: str = "기본형") -> str:
     try:
         RULES = {
@@ -685,7 +614,6 @@ def generate_template(request: str, style: str = "기본형") -> str:
         generation_rules = retrievers.get('generation').invoke(request)
         formatted_rules = "\n".join([f"- {doc.metadata.get('rule_id', 'Unknown')}: {doc.page_content}" for doc in generation_rules])
         
-        # --- 여기가 고도화된 프롬프트입니다 ---
         prompt = ChatPromptTemplate.from_template(
             '''You are a highly precise, rule-based Kakao Alimtalk Template Generation Bot. Your sole mission is to generate a perfect template draft that strictly adheres to all user requests, style guides, and provided rules.
 
