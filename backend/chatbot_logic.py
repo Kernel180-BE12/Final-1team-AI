@@ -271,16 +271,17 @@ def initialize_system():
         vector_db_path = "vector_db"
         
         # 1. 추론 및 생성용 고성능 모델 (gpt-5), 실험을 위해 파라미터 최하로 설정
-        llm_reasoning = ChatOpenAI(
-            model="gpt-5",
-            model_kwargs={
-                "reasoning_effort": "low",
-                "verbosity": "low"
-            }
-        )
+        # llm_reasoning = ChatOpenAI(
+        #     model="gpt-5",
+        #     model_kwargs={
+        #         "reasoning_effort": "low",
+        #         "verbosity": "medium"
+        #     }
+        # )
+        llm_reasoning =ChatOpenAI(model="gpt-4.1", temperature=0.1)
 
         # 2. 구조화, 변수화 및 단순 작업용 빠른 모델 (gpt-4.1), 실험을 위해 파라미터 최하로 설정
-        llm_fast = ChatOpenAI(model="gpt-4.1", temperature=0)
+        llm_fast = ChatOpenAI(model="gpt-4.1", temperature=0.2)
 
         
         embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
