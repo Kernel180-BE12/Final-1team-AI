@@ -746,7 +746,7 @@ Create a ready-to-use Alimtalk template draft that reflects the user's request, 
 def validate_template(template: str) -> Dict:
     parser = JsonOutputParser(pydantic_object=TemplateAnalysisResult)
     relevant_rules = retrievers['compliance'].invoke(template)
-    formatted_rules = "\n".join([f"- {doc.metadata.get('rule_id', 'Unknown')}: {doc.page_content}" for doc in relevant_rules])
+    formatted_rules = "\n".join([f"- {doc.metadata.get('source', 'content')}: {doc.page_content}" for doc in relevant_rules])
     prompt = ChatPromptTemplate.from_template(
         '''당신은 카카오 알림톡 심사 가이드라인을 완벽하게 숙지한 AI 심사관입니다.
         주어진 템플릿이 모든 규칙을 준수하는지 검사하고, 결과를 JSON 형식으로 반환하세요.
@@ -758,7 +758,7 @@ def validate_template(template: str) -> Dict:
         1. 템플릿이 모든 규칙을 준수하면 `status`를 "accepted"로 설정합니다.
         2. 규칙 위반 사항이 하나라도 발견되면 `status`를 "rejected"로 설정합니다.
         3. "rejected"인 경우, `reason`에 어떤 규칙을 위반했는지 명확하고 상세하게 설명합니다.
-        4. `evidence` 필드에는 위반의 근거가 된 규칙의 `rule_id`를 정확히 기재합니다.
+        4. `evidence` 필드에는 위반의 근거가 된 규칙의 `content`를 정확히 기재합니다.
         5. 위반 사항을 해결할 수 있는 구체적인 `suggestion`을 제공합니다.
         6. 최종 결과는 반드시 지정된 JSON 형식으로만 출력해야 합니다.
         # 심사 결과 (JSON):
