@@ -54,9 +54,7 @@ async def chat(request: ChatRequest):
         # LangGraph에 전달할 상태를 구성합니다.
         initial_graph_state = {
             "original_request": message,
-            "template_pipeline_state": session_state.get("template_pipeline_state", {
-                'step': 'initial'
-            }),            
+            "template_pipeline_state":  template_state,
             "intent": None,
             "next_action": session_state.get("next_action"),
             "final_response": None,
