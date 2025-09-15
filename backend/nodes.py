@@ -12,8 +12,14 @@ from chatbot_logic import (
 )
 
 # --- 모델 및 파서 초기화 ---
-llm_fast = ChatOpenAI(model="gpt-4.1-mini", temperature=0)
-llm_smart = ChatOpenAI(model="gpt-4.1", temperature=0)
+llm_fast = ChatOpenAI(
+            model="o4-mini",
+            # reasoning_effort="low",
+        )
+llm_smart = ChatOpenAI(
+            model="gpt-5",
+            reasoning_effort="low",
+        )
 
 # llm_smart = ChatOpenAI(model="gpt-5", temperature=0.2)  # gpt-5로 변경 (가정: OpenAI에서 지원될 경우)
 # llm_fast = ChatOpenAI(model="gpt-4o-mini", temperature=0)  # nano를 gpt-4o-mini로 해석 (nano가 gpt-4o-mini를 의미할 가능성이 높음)
@@ -80,7 +86,7 @@ def classify_intent_node(state: GraphState) -> GraphState:
         ("human", "사용자 메시지: {request}")
     ])
     
-    classifier_chain = prompt | llm_smart.with_structured_output(IntentClassifier)
+    classifier_chain = prompt | llm_fast.with_structured_output(IntentClassifier)
     
     try:
         result = classifier_chain.invoke({"request": state["original_request"]})
