@@ -284,17 +284,8 @@ def initialize_system():
             model="gpt-5",
             reasoning_effort= "medium"
         )
-        # llm_reasoning =ChatOpenAI(model="gpt-4.1", temperature=0.1)
-
-        # 2. 구조화, 변수화 및 단순 작업용 빠른 모델 (gpt-4.1), 실험을 위해 파라미터 최하로 설정
-        # llm_fast = ChatOpenAI(
-        #     model="gpt-5-nano",
-        #     model_kwargs={
-        #         "reasoning_effort": "low",
-        #         "verbosity": "low"
-        #     }
-        # )
-
+    
+    
         llm_fast = ChatOpenAI(
             model="gpt-5-nano",
             reasoning_effort="low"
