@@ -46,13 +46,17 @@ async def chat(request: ChatRequest):
     try:
         message = request.message
         session_state = request.state or {}
+        template_state = session_state.get("template_pipeline_state")
+        if not template_state:
+            template_state = {'step': 'initial'}
+
 
         # LangGraph에 전달할 상태를 구성합니다.
         initial_graph_state = {
             "original_request": message,
             "template_pipeline_state": session_state.get("template_pipeline_state", {
                 'step': 'initial'
-            }),
+            }),            
             "intent": None,
             "next_action": session_state.get("next_action"),
             "final_response": None,
@@ -85,7 +89,6 @@ async def chat(request: ChatRequest):
             "structured_template": response_data.get("structured_template"),
             "editable_variables": response_data.get("editable_variables", {}),
             "structured_templates": response_data.get("structured_templates", []),
-            # ★★★ 누락되었던 hasImage 키 추가 ★★★
             "hasImage": response_data.get("hasImage", False) 
         }
         # --- ▲▲▲ 여기까지 수정 ▲▲▲ ---
