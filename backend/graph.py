@@ -14,8 +14,7 @@ from nodes import (
 def main_router(state: GraphState) -> str:
     """대화 상태를 기반으로 요청을 라우팅하는 메인 컨트롤러."""
     next_action = state.get("next_action")
-    pipeline_step = state.get("template_pipeline_state", {}).get("step")
-
+    pipeline_step = (state.get("template_pipeline_state") or {}).get("step")
     if next_action == "awaiting_confirmation":
         user_response = state.get("original_request", "").strip()
         if user_response == "예":

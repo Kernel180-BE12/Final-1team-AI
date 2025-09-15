@@ -297,7 +297,7 @@ def initialize_system():
 
         llm_fast = ChatOpenAI(
             model="gpt-5-nano",
-            reasoning_effort="low",
+            reasoning_effort="low"
         )
 
 
