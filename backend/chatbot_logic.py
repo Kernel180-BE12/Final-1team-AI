@@ -510,26 +510,26 @@ def generate_template(request: str, style: str = "기본형") -> ParameterizedRe
         formatted_rules = "\n".join([f"- {doc.metadata.get('rule_id', 'Unknown')}: {doc.page_content}" for doc in compliance_rules])
         
         prompt = ChatPromptTemplate.from_template(
-            '''You are a highly precise, rule-based Kakao Alimtalk Template Generation Bot. Your sole mission is to generate a perfect template draft that strictly adheres to all user requests, style guides, and provided rules.
+             '''당신은 카카오 알림톡 심사 규정을 완벽하게 이해하고 있는 템플릿 제작 전문가입니다.
+### 최종 목표:
+- 사용자의 '최초 요청 의도'를 **최대한 살리면서** 카카오 알림톡의 모든 규정을 통과하는 템플릿 초안을 생성하세요.
+- 만약 요청 내용이 직접적으로 규정을 위반하는 경우, **정보성 메시지로 전환**하여 의도를 유지해야 합니다.
+- **광고성 표현(할인, 쿠폰, 이벤트 등)을 직접 사용하지 않고**, 고객에게 유용한 정보를 제공하는 형태로 표현을 순화하는 것이 핵심입니다.
 
-### Final Goal:
-Create a ready-to-use Alimtalk template draft that reflects the user's request, utilizes the features of the selected style, and **complies with every single provided rule without exception.**
+### 입력 정보:
+- **사용자의 최초 요청:** "{request}"
+- **적용할 스타일:** {style}
+- **스타일 가이드:** {style_guide}
+- **필수 준수 규칙:** {rules}
 
-### Input Information:
-- **User's Original Request:** "{request}"
-- **Style to Apply:** {style}
-- **Style Guide:** {style_guide}
-- **Absolute Rules to Follow:** {rules}
+### 작업 순서:
+1.  **의도 분석:** 사용자의 요청에서 '핵심 의도'가 무엇인지 파악합니다. (예: 추석 맞이 10% 할인을 알리는 것)
+2.  **규정 검토:** 핵심 의도가 '필수 준수 규칙'에 위배되는지 판단합니다.
+3.  **정보성 전환:** 만약 위배된다면, '광고성 표현'을 제거하고, '정보성 메시지'로 전환하여 의도를 간접적으로 전달하는 방법을 모색합니다.
+4.  **변수화:** 변경될 수 있는 정보(고객명, 기간 등)는 `#{{변수명}}` 형식으로 변수화합니다.
+5.  **결과물:** 최종 결과는 수정된 템플릿 텍스트만 출력합니다.
 
-### Execution Steps:
-1.  **Analyze Request:** Meticulously analyze the user's original request to identify the core purpose and required information for the template.
-2.  **Apply Style:** Refer to the style guide's description and examples to determine the overall structure and tone & manner.
-3.  **Ensure Compliance:** Review **every rule** in the `Absolute Rules to Follow` list. Ensure the generated template does not violate any of them. Pay special attention to variable usage rules (e.g., variable names in Korean, no variables in button names).
-4.  **Parameterize:** Identify specific, changeable information (e.g., customer names, dates, product names, amounts) and convert it into the `#{{variable_name}}` format. The variable name must be a concise and clear Korean word representing the information (e.g., `#{{고객명}}`, `#{{주문번호}}`).
-5.  **Output Format:** Your **only** output must be the raw text of the generated template. Do not include any introductory phrases, explanations, markdown code blocks (```), or any text other than the template itself.
-
-
-### Generated Template Draft:
+### 템플릿 초안:
 '''
         )
 
@@ -638,29 +638,27 @@ def correct_template(state: dict) -> str:
             """
 
         correction_prompt_template = """
-        당신은 카카오 알림톡 심사팀의 수정 전문가입니다. 반려된 템플릿을 수정하는 임무를 수행합니다.
-        
-        ### [임무 목표]
-        주어진 '반려 사유'를 완전히 해결하고, '최초 요청 의도'를 반영한 정보성 템플릿을 완성하세요.
-        
-        ### [분석 정보]
-        -   **최초 요청 의도:** {original_request}
-        -   **반려된 템플릿 초안:**
-            ```{rejected_draft}```
-        -   **반려 사유:** {rejection_reason}
-        
-        ### [수정 지시]
-        1.  **반려 사유 해결**: 반려된 이유를 정확히 파악하여 해당 문제점을 완전히 제거하세요.
-        2.  **광고성 표현 제거**: '할인', '특가', '이벤트', '쿠폰', '혜택'과 같은 광고성 용어와 '지금 바로 확인하세요!' 같은 구매 유도 문구를 삭제하세요.
-        3.  **정보성 강화**: 객관적이고 사실적인 정보(주문 상태, 예약 현황, 서비스 안내 등)만 남겨서 메시지의 신뢰도를 높이세요.
-        4.  **관점 전환**: 메시지 주체를 '사업자'가 아닌, **'정보를 받는 고객'**의 관점에서 수정하세요.
-        5.  **가독성 개선**: 간결하고 명확한 문체로 다듬고, 필요한 경우 줄바꿈을 추가하여 가독성을 높이세요.
+당신은 카카오 알림톡 심사팀의 수정 전문가입니다. 반려된 템플릿을 수정하는 임무를 수행합니다.
 
-        {instruction_step}
+### [임무 목표]
+주어진 '반려 사유'를 완전히 해결하고, **'최초 요청 의도({original_request})'를 다시 한번 확인하여** 이를 반영한 정보성 템플릿을 완성하세요.
 
-        ### [수정된 템플릿]
-        아래에 최종 수정된 템플릿 내용만 출력하세요. 다른 어떤 서론이나 설명도 추가하지 마세요.
-        """
+### [분석 정보]
+-   **반려된 템플릿 초안:**
+    ```{rejected_draft}```
+-   **반려 사유:** {rejection_reason}
+
+### [수정 지시]
+1.  **반려 사유 해결**: 반려된 이유를 정확히 파악하여 해당 문제점을 완전히 제거하세요.
+2.  **광고성 표현 제거**: '할인', '특가', '이벤트', '쿠폰', '혜택'과 같은 광고성 용어를 직접적으로 사용하지 마세요. 대신, 고객에게 유익한 **'정보'**를 제공하는 형태로 표현을 전환하세요.
+3.  **관점 전환**: 메시지 주체를 '사업자'가 아닌, **'정보를 받는 고객'**의 관점에서 수정하세요.
+4.  **가독성 개선**: 간결하고 명확한 문체로 다듬고, 필요한 경우 줄바꿈을 추가하여 가독성을 높이세요.
+5.  **최종 결과**: 수정된 템플릿 내용만 출력합니다.
+
+{instruction_step}
+
+### [수정된 템플릿]
+"""
         
         correction_prompt = ChatPromptTemplate.from_template(correction_prompt_template)
         
