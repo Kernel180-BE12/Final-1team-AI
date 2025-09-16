@@ -160,7 +160,7 @@ def initialize_system():
     try:
         data_dir = 'data'
         
-        llm_reasoning =ChatOpenAI(model="gpt-5-mini",  reasoning_effort="low")
+        llm_reasoning =ChatOpenAI(model="gpt-4.1", temperature=0.2)
         llm_medium = ChatOpenAI(model="gpt-4.1-nano", temperature=0.2)
         llm_fast = ChatOpenAI(model="gpt-4.1-nano", temperature=0)
 
