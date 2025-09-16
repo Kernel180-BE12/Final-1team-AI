@@ -13,11 +13,11 @@ from chatbot_logic import (
 
 # --- 모델 및 파서 초기화 ---
 llm_fast = ChatOpenAI(
-            model="gpt-3.5-turbo"
+            model="gpt-4o-mini",temperature=0.5
         )
 llm_smart = ChatOpenAI(
-            model="gpt-5",
-            reasoning_effort="low"
+            model="gpt-4o",
+            temperature=0.2
         )
 
 # llm_smart = ChatOpenAI(model="gpt-5", temperature=0.2)  # gpt-5로 변경 (가정: OpenAI에서 지원될 경우)
