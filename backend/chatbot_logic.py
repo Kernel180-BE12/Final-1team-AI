@@ -227,34 +227,41 @@ def initialize_system():
         print(f"시스템 초기화 실패: {e}")
         raise e
 
-
 def process_chat_message(message: str, state: dict) -> dict:
     try:
+        # 0. 초기 상태 설정
         if 'step' not in state:
             state['step'] = 'initial'
             state['hasImage'] = False
+
+        # 1. 최초 요청 접수 및 유사 템플릿 추천
         if state['step'] == 'initial':
             if 'original_request' not in state:
                 state['original_request'] = message
             state['step'] = 'recommend_templates'
+            
             if 'whitelist' not in retrievers or not retrievers['whitelist']:
                 state['step'] = 'select_style'
                 return {'message': '유사 템플릿 검색 기능이 비활성화 상태입니다. 새로운 템플릿을 생성하겠습니다.\n\n원하시는 스타일을 선택해주세요:', 'state': state, 'options': ['기본형', '이미지형', '아이템리스트형']}
+            
             similar_docs = retrievers['whitelist'].invoke(state['original_request'])
             if not similar_docs:
                 state['step'] = 'select_style'
                 return {'message': '유사한 기존 템플릿을 찾지 못했습니다. 새로운 템플릿을 생성하겠습니다.\n\n원하시는 스타일을 선택해주세요:', 'state': state, 'options': ['기본형', '이미지형', '아이템리스트형']}
+            
             structured_templates = [structure_template_with_llm(doc.page_content) for doc in similar_docs[:3]]
             template_options = [f'템플릿 {i+1} 사용' for i in range(len(similar_docs[:3]))]
-            new_creation_options = ['새로 만들기']
-            final_options = template_options + new_creation_options
+            final_options = template_options + ['새로 만들기']
             state['retrieved_similar_templates'] = [doc.page_content for doc in similar_docs[:3]]
+            
             return {
                 'message': '요청하신 내용과 유사한 기존 템플릿을 찾았습니다. 이 템플릿을 사용하시거나 새로 만드시겠어요?', 
                 'state': state, 
-                'structured_templates': structured_templates, 
-                'options': final_options
+                'structured_templates': [st.model_dump() for st in structured_templates],
+                'options': ['새로 만들기']
             }
+
+        # 2. 추천 템플릿 사용 또는 새로 만들기 선택
         elif state['step'] == 'recommend_templates':
             if message.endswith(' 사용'):
                 try:
@@ -272,23 +279,22 @@ def process_chat_message(message: str, state: dict) -> dict:
                     'state': state,
                     'options': ['기본형', '이미지형', '아이템리스트형']
                 }
+            
             options = [f'템플릿 {i+1} 사용' for i in range(len(state.get('retrieved_similar_templates',[])))] + ['새로 만들기']
             return {'message': '제시된 옵션 중에서 선택해주세요.', 'state': state, 'options': options}
+
+        # 3. (새로 만들 경우) 스타일 선택
         elif state.get("step") == "select_style":
             if message in ["기본형", "이미지형", "아이템리스트형"]:
                 state["selected_style"] = message
-                if message == "이미지형":
-                    state["hasImage"] = True
-                    state["step"] = "generate_and_validate"
-                    return process_chat_message(message, state)
-                elif message == "기본형":
-                    state["hasImage"] = False
+                state["hasImage"] = (message == "이미지형")
+                if message != "아이템리스트형":
                     state["step"] = "generate_and_validate"
                     return process_chat_message(message, state)
                 else:
                     state["step"] = "confirm_image_usage"
                     return {
-                        "message": "이미지를 포함하시겠습니까?",
+                        "message": "아이템리스트형 템플릿에 이미지를 포함하시겠습니까?",
                         "state": state,
                         "options": ["예", "아니오"]
                     }
@@ -298,6 +304,8 @@ def process_chat_message(message: str, state: dict) -> dict:
                     "state": state,
                     "options": ["기본형", "이미지형", "아이템리스트형"]
                 }
+
+        # 4. (아이템리스트형일 경우) 이미지 포함 여부 확인
         elif state.get("step") == "confirm_image_usage":
             if message in ["예", "아니오"]:
                 state["hasImage"] = (message == "예")
@@ -309,6 +317,8 @@ def process_chat_message(message: str, state: dict) -> dict:
                     "state": state,
                     "options": ["예", "아니오"]
                 }
+
+        # 5. 템플릿 생성 및 1차 검증
         elif state.get('step') == 'generate_and_validate':
             if 'selected_template_content' in state:
                 base_template = state['selected_template_content']
@@ -321,74 +331,145 @@ def process_chat_message(message: str, state: dict) -> dict:
                 )
                 base_template = generated_result.parameterized_template
                 state["variables_info"] = [v.model_dump() for v in generated_result.variables]
+            
             state["base_template"] = base_template
-            template_draft = base_template # fill_template_with_request 제거 후 템플릿 자체를 draft로 사용
-            state["template_draft"] = template_draft
-            validation_result = validate_template(template_draft)
+            state["template_draft"] = base_template
+            validation_result = validate_template(base_template)
             state['validation_result'] = validation_result
             state['correction_attempts'] = 0
+            
             if validation_result['status'] == 'accepted':
                 state['step'] = 'completed'
                 return process_chat_message(message, state)
             else:
                 state['step'] = 'correction'
                 return {'message': f'템플릿을 생성했지만 규정 위반이 발견되었습니다.\n\n문제점: {validation_result["reason"]}\n\n개선 제안: {validation_result.get("suggestion", "없음")}\n\nAI가 자동으로 수정하겠습니다.', 'state': state}
+
+        # 6. (반려 시) AI 자동 수정
         elif state['step'] == 'correction':
             if state['correction_attempts'] < MAX_CORRECTION_ATTEMPTS:
-                corrected_base_template = correct_template(state)
+                corrected_template = correct_template(state)
                 state['correction_attempts'] += 1
-                validation_result = validate_template(corrected_base_template)
+                validation_result = validate_template(corrected_template)
                 state["validation_result"] = validation_result
+                
                 if validation_result["status"] == "accepted":
-                    state['base_template'] = corrected_base_template
-                    final_draft = corrected_base_template # fill_template_with_request 제거 후 템플릿 자체를 draft로 사용
-                    state["template_draft"] = final_draft
+                    state['base_template'] = corrected_template
+                    state["template_draft"] = corrected_template
                     state["step"] = "completed"
                     return process_chat_message(message, state)
                 else:
-                    state['template_draft'] = corrected_base_template
-                    return process_chat_message(message, state)
+                    state['template_draft'] = corrected_template
+                    return {'message': f'AI 자동 수정 후에도 문제가 발견되었습니다. (시도: {state["correction_attempts"]}/{MAX_CORRECTION_ATTEMPTS})\n\n문제점: {validation_result["reason"]}\n\n다시 수정하겠습니다.', 'state': state}
             else:
                 state['step'] = 'manual_correction'
-                return {'message': f'AI 자동 수정이 실패했습니다. 직접 수정하시겠습니까?', 'state': state, 'options': ['포기하기']}
+                return {'message': f'AI 자동 수정({MAX_CORRECTION_ATTEMPTS}회)에 실패했습니다. 직접 수정하시겠습니까? 아니면 포기하시겠습니까?', 'state': state, 'options': ['직접 수정하기', '포기하기']}
+
+        # 7. (AI 수정 실패 시) 사용자 직접 수정
         elif state['step'] == 'manual_correction':
             if message == '포기하기':
                 state['step'] = 'initial'
-                return {'message': '템플릿 생성을 포기했습니다.', 'state': {'step': 'initial'}}
+                return {'message': '템플릿 생성을 포기했습니다. 처음부터 다시 시작합니다.', 'state': {'step': 'initial'}}
+            
+            if message == '직접 수정하기':
+                 return {'message': '수정할 내용을 입력해주세요.', 'state': state}
+
+            user_corrected_template = message
+            validation_result = validate_template(user_corrected_template)
+            
+            if validation_result['status'] == 'accepted':
+                state['base_template'] = user_corrected_template
+                state['template_draft'] = user_corrected_template
+                state['step'] = 'completed'
+                return process_chat_message(message, state)
             else:
-                user_corrected_template = message
-                validation_result = validate_template(user_corrected_template)
-                state['validation_result'] = validation_result
-                if validation_result['status'] == 'accepted':
-                    state['base_template'] = user_corrected_template
-                    final_draft = user_corrected_template # fill_template_with_request 제거 후 템플릿 자체를 draft로 사용
-                    state['template_draft'] = final_draft
-                    state['step'] = 'completed'
-                    return process_chat_message(message, state)
-                else:
-                    return {'message': f'수정하신 템플릿에도 문제가 있습니다. 다시 수정해주세요.', 'state': state, 'options': ['포기하기']}
+                return {'message': f'수정하신 템플릿에도 문제가 있습니다.\n\n문제점: {validation_result["reason"]}\n\n다시 수정하시거나 포기해주세요.', 'state': state, 'options': ['포기하기']}
+
+        # 8. ★★★ [수정됨] 템플릿 완성 및 사용자 피드백 즉시 요청 ★★★
         elif state['step'] == 'completed':
-            base_template = state.get("base_template", "")
-            variables = state.get("variables_info", [])
-            structured_data = structure_template_with_llm(base_template)
-            editable_variables = {"parameterized_template": base_template, "variables": variables} if variables else None
-            has_image_flag = state.get("hasImage", False)
-            response_message = "✅ 템플릿이 생성되었습니다."
-            state["step"] = "initial"
+            final_template = state.get("template_draft", state.get("base_template", ""))
+            state['final_template'] = final_template
+            state['step'] = 'ask_for_feedback'
+            
+            structured_data = structure_template_with_llm(final_template)
+            
             return {
-                "message": response_message,
+                "message": "✅ 템플릿 생성이 완료되었습니다. 혹시 마음에 들지 않거나, 추가/수정하고 싶은 부분이 있으신가요?",
                 "state": state,
-                "template": base_template,
+                "template": final_template,
                 "structured_template": structured_data.model_dump(),
-                "editable_variables": editable_variables,
+                "options": ["네, 수정할래요", "아니요, 괜찮아요"], # <--- 핵심: 옵션을 여기서 바로 전달
                 "buttons": structured_data.buttons,
-                "hasImage": has_image_flag
+                "hasImage": state.get("hasImage", False)
             }
-        return {'message': '알 수 없는 상태입니다. 다시 시도해주세요.', 'state': {'step': 'initial'}}
+
+        # 9. ★★★ [수정됨] 피드백 처리 및 미리보기 유지 ★★★
+        elif state['step'] == 'ask_for_feedback':
+            if message == "네, 수정할래요":
+                state['step'] = 'awaiting_feedback'
+                final_template = state.get('final_template', '')
+                return {
+                    "message": "어떻게 수정하고 싶으신지 구체적으로 알려주세요. (예: '인사 문구를 더 부드럽게 바꿔줘', '마지막에 안내 문구 하나 더 추가해줘')",
+                    "state": state,
+                    "template": final_template, # <--- 핵심: 미리보기가 유지되도록 template 전달
+                    "structured_template": structure_template_with_llm(final_template).model_dump()
+                }
+            elif message == "아니요, 괜찮아요":
+                final_template = state.get('final_template', '')
+                structured_data = structure_template_with_llm(final_template)
+                response = {
+                    "message": "템플릿 생성을 마칩니다. 이용해주셔서 감사합니다!",
+                    "state": {'step': 'initial'},
+                    "template": final_template,
+                    "structured_template": structured_data.model_dump(),
+                    "buttons": structured_data.buttons,
+                    "hasImage": state.get("hasImage", False)
+                }
+                if "variables_info" in state:
+                    response["editable_variables"] = {
+                        "parameterized_template": state.get("base_template", final_template),
+                        "variables": state.get("variables_info", [])
+                    }
+                return response
+            else:
+                final_template = state.get('final_template', '')
+                return {
+                    "message": "선택지 중에서 골라주세요.",
+                    "state": state,
+                    "options": ["네, 수정할래요", "아니요, 괜찮아요"],
+                    "template": final_template,
+                    "structured_template": structure_template_with_llm(final_template).model_dump()
+                }
+
+        # 10. 사용자 피드백 기반 수정 및 재검증
+        elif state['step'] == 'awaiting_feedback':
+            state['user_feedback'] = message
+            
+            refined_template = refine_template_with_feedback(state)
+            validation_result = validate_template(refined_template)
+            
+            if validation_result['status'] == 'accepted':
+                state['template_draft'] = refined_template
+                state['step'] = 'completed' 
+                return process_chat_message(message, state)
+            else:
+                state['step'] = 'awaiting_feedback'
+                return {
+                    "message": f"수정된 템플릿이 규칙에 맞지 않습니다.\n\n- 반려 사유: {validation_result['reason']}\n\n다시 수정 요청사항을 말씀해주세요. 이번에는 규칙을 고려하여 더 구체적으로 알려주시면 좋습니다.",
+                    "state": state,
+                    "template": refined_template,
+                    "structured_template": structure_template_with_llm(refined_template).model_dump()
+                }
+
+        # 알 수 없는 상태 처리
+        else:
+            return {'message': '알 수 없는 상태입니다. 처음부터 다시 시도해주세요.', 'state': {'step': 'initial'}}
+
+    # 전체 예외 처리
     except Exception as e:
         print(f"Error in process_chat_message: {e}")
         traceback.print_exc()
-        return {'message': f'처리 중 오류가 발생했습니다: {str(e)}', 'state': {'step': 'initial'}}
+        return {'message': f'처리 중 오류가 발생했습니다: {str(e)}. 시스템을 초기화합니다.', 'state': {'step': 'initial'}}
 
 def structure_template_with_llm(template_string: str) -> StructuredTemplate:
     parser = JsonOutputParser(pydantic_object=StructuredTemplate)
@@ -684,3 +765,40 @@ def correct_template(state: dict) -> str:
         print(f"Error in correct_template: {e}")
         traceback.print_exc()
         return state.get('template_draft', '수정 중 오류가 발생했습니다.')
+    
+
+def refine_template_with_feedback(state: dict) -> str:
+    """
+    사용자의 피드백을 바탕으로 기존 템플릿을 수정합니다.
+    """
+    prompt = ChatPromptTemplate.from_template(
+        """당신은 사용자의 피드백을 반영하여 템플릿을 수정하는 AI 전문가입니다.
+
+        ### 맥락 정보
+        - **사용자의 초기 요청**: {initial_request}
+        - **현재 템플릿**:
+        ```{current_template}```
+        - **사용자의 수정 요청사항**: {user_feedback}
+
+        ### 작업 지시
+        1.  '사용자의 초기 요청' 의도를 잃지 않도록 주의하세요.
+        2.  '현재 템플릿'을 바탕으로 '사용자의 수정 요청사항'을 충실히 반영하여 새로운 템플릿을 만드세요.
+        3.  수정 과정에서 변수 형식(`#{{변수명}}`)이 깨지지 않도록 유지해야 합니다.
+        4.  최종 결과는 수정된 템플릿 텍스트만 출력해야 합니다. 다른 어떤 설명도 추가하지 마세요.
+
+        ### 수정된 템플릿:
+        """
+    )
+    
+    chain = prompt | llm_reasoning | StrOutputParser()
+    
+    try:
+        refined_template = chain.invoke({
+            "initial_request": state.get('original_request', ''),
+            "current_template": state.get('final_template', ''),
+            "user_feedback": state.get('user_feedback', '')
+        })
+        return refined_template.strip()
+    except Exception as e:
+        print(f"Error during template refinement: {e}")
+        return state.get('final_template', '') # 오류 발생 시 원본 템플릿 반환
