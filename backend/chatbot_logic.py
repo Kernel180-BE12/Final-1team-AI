@@ -227,7 +227,6 @@ def initialize_system():
         print(f"시스템 초기화 실패: {e}")
         raise e
 
-
 def process_chat_message(message: str, state: dict) -> dict:
     try:
         # 0. 초기 상태 설정
@@ -259,7 +258,7 @@ def process_chat_message(message: str, state: dict) -> dict:
                 'message': '요청하신 내용과 유사한 기존 템플릿을 찾았습니다. 이 템플릿을 사용하시거나 새로 만드시겠어요?', 
                 'state': state, 
                 'structured_templates': [st.model_dump() for st in structured_templates],
-                'options': final_options
+                'options': ['새로 만들기']
             }
 
         # 2. 추천 템플릿 사용 또는 새로 만들기 선택
