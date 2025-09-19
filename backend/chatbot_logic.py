@@ -264,14 +264,30 @@ def process_chat_message(message: str, state: dict) -> dict:
         # 2. 추천 템플릿 사용 또는 새로 만들기 선택
         elif state['step'] == 'recommend_templates':
             if message.endswith(' 사용'):
-                try:
-                    template_idx = int(message.split()[1]) - 1
-                    selected_template = state['retrieved_similar_templates'][template_idx]
-                    state['selected_template_content'] = selected_template
-                    state['step'] = 'generate_and_validate'
-                    return process_chat_message(message, state)
-                except (IndexError, ValueError):
-                    pass
+              try:
+                  template_idx = int(message.split()[1]) - 1
+                  selected_template = state['retrieved_similar_templates'][template_idx]
+                  
+                  # --- 💡[수정된 로직] ---
+                  # 1. 선택된 템플릿을 기반으로 변수를 추출 (파라미터화)
+                  parameterized_result = parameterize_template(selected_template)
+                  
+                  # 2. 파라미터화된 결과를 state에 저장
+                  #    'base_template'은 변수화된 템플릿을, 'variables_info'는 변수 목록을 저장
+                  state["base_template"] = parameterized_result.parameterized_template
+                  state["template_draft"] = parameterized_result.parameterized_template
+                  state["variables_info"] = [v.model_dump() for v in parameterized_result.variables]
+                  
+                  # 3. 불필요한 생성/검증 단계를 건너뛰고 바로 'completed'로 이동
+                  state['step'] = 'completed'
+                  
+                  # 4. 변경된 state로 함수를 다시 호출하여 'completed' 단계의 로직 실행
+                  return process_chat_message(message, state)
+                  # --- [수정 끝] ---
+                  
+              except (IndexError, ValueError):
+                  # 잘못된 '템플릿 X 사용' 메시지 처리
+                  pass
             elif message == '새로 만들기':
                 state['step'] = 'select_style'
                 return {
@@ -664,40 +680,6 @@ def validate_template(template: str) -> Dict:
         print(f"Error during validation: {e}")
         return {"status": "error", "reason": "검증 중 오류 발생"}
 
-
-# def correct_template(state: dict) -> str:
-#     validation_result = state['validation_result']
-#     original_template = state['template_draft']
-#     prompt = ChatPromptTemplate.from_template(
-#         '''당신은 템플릿의 문제점을 분석하고 수정하는 AI 전문가입니다.
-#         주어진 원본 템플릿과 반려 사유를 바탕으로, 모든 문제를 해결한 새로운 템플릿을 제안하세요.
-#         # 원본 템플릿:
-#         ```{original_template}```
-#         # 반려 사유 및 수정 제안:
-#         - 이유: {reason}
-#         - 근거: {evidence}
-#         - 제안: {suggestion}
-#         # 지시사항:
-#         1. 반려 사유를 명확히 이해하고, 어떤 부분을 수정해야 할지 파악합니다.
-#         2. 수정 제안을 참고하여 템플릿을 개선합니다.
-#         3. 원본 템플릿의 의도는 최대한 유지하면서 문제점만 해결해야 합니다.
-#         4. 최종 결과물은 수정된 템플릿 텍스트만 출력해야 합니다. 다른 어떤 설명도 추가하지 마세요.
-#         # 수정된 템플릿:
-#         '''
-#     )
-#     chain = prompt | llm_reasoning | StrOutputParser()
-#     try:
-#         corrected_template = chain.invoke({
-#             "original_template": original_template,
-#             "reason": validation_result.get("reason", ""),
-#             "evidence": validation_result.get("evidence", ""),
-#             "suggestion": validation_result.get("suggestion", "")
-#         })
-#         return corrected_template.strip()
-#     except Exception as e:
-#         print(f"Error during correction: {e}")
-#         return original_template
-
 def correct_template(state: dict) -> str:
     try:
         attempts = state.get('correction_attempts', 0)
@@ -802,3 +784,40 @@ def refine_template_with_feedback(state: dict) -> str:
     except Exception as e:
         print(f"Error during template refinement: {e}")
         return state.get('final_template', '') # 오류 발생 시 원본 템플릿 반환
+    
+def parameterize_template(template_string: str) -> ParameterizedResult:
+    """
+    주어진 템플릿 문자열에서 변수를 추출하여 파라미터화된 결과를 반환합니다.
+    """
+    parser = JsonOutputParser(pydantic_object=ParameterizedResult)
+    prompt = ChatPromptTemplate.from_template(
+        '''당신은 주어진 텍스트를 재사용 가능한 템플릿으로 변환하는 전문가입니다.
+        주어진 텍스트에서 고유명사, 날짜, 장소, 숫자 등 구체적이고 바뀔 수 있는 정보들을 식별하여, 의미 있는 한글 변수명으로 대체해주세요.
+        # 지시사항
+        1. 텍스트의 핵심 정보(누가, 언제, 어디서, 무엇을, 어떻게 등)를 파악합니다.
+        2. 원본 값과 변수명, 그리고 각 변수에 대한 설명을 포함하는 변수 목록을 생성합니다.
+        3. 변수 형식은 #{{변수명}} 이어야 합니다.
+        4. 최종 결과를 지정된 JSON 형식으로만 출력해야 합니다. 그 외의 설명은 절대 추가하지 마세요.
+        # 원본 텍스트:
+        {original_text}
+        # 출력 형식 (JSON):
+        {format_instructions}
+        '''
+    )
+    chain = prompt | llm_fast | parser
+    try:
+        result = chain.invoke({
+            "original_text": template_string,
+            "format_instructions": parser.get_format_instructions(),
+        })
+        if not isinstance(result, dict):
+            result = {"parameterized_template": template_string, "variables": []}
+        if "parameterized_template" not in result:
+            result["parameterized_template"] = template_string
+        if "variables" not in result:
+            result["variables"] = []
+        return ParameterizedResult(**result)
+    except Exception as e:
+        print(f"Error during parameterization: {e}")
+        return ParameterizedResult(parameterized_template=template_string, variables=[])
+
