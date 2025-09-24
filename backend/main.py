@@ -99,71 +99,71 @@ async def chat(request: ChatRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"서버 내부 오류: {str(e)}")
 
-@app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest):
-    """
-    SSE: Content-Type text/event-stream
-    Spring(WebFlux) → WebClient로 그대로 릴레이하세요.
-    """
-    message = request.message
-    session_state = request.state or {}
-    template_state = session_state.get("template_pipeline_state") or {"step": "initial"}
+# @app.post("/api/chat/stream")
+# async def chat_stream(request: ChatRequest):
+#     """
+#     SSE: Content-Type text/event-stream
+#     Spring(WebFlux) → WebClient로 그대로 릴레이하세요.
+#     """
+#     message = request.message
+#     session_state = request.state or {}
+#     template_state = session_state.get("template_pipeline_state") or {"step": "initial"}
 
-    initial_graph_state = {
-        "original_request": message,
-        "template_pipeline_state": template_state,
-        "intent": None,
-        "next_action": session_state.get("next_action"),
-        "final_response": None,
-        "retrieved_docs": None,
-        "error": None
-    }
+#     initial_graph_state = {
+#         "original_request": message,
+#         "template_pipeline_state": template_state,
+#         "intent": None,
+#         "next_action": session_state.get("next_action"),
+#         "final_response": None,
+#         "retrieved_docs": None,
+#         "error": None
+#     }
 
-    async def gen():
-        # 최소한 “심장박동(heartbeat)” 한 번은 먼저 쏘기(프록시 idle 회피)
-        payload = ChatStreamResponse(
-                success=False,
-                response="답변 생성 시작"
-            )
-        yield f"data: {payload.model_dump_json()}\n\n"
+#     async def gen():
+#         # 최소한 “심장박동(heartbeat)” 한 번은 먼저 쏘기(프록시 idle 회피)
+#         payload = ChatStreamResponse(
+#                 success=False,
+#                 response="답변 생성 시작"
+#             )
+#         yield f"data: {payload.model_dump_json()}\n\n"
 
-        # 긴 작업 동안 프록시/워커 idle 타임아웃을 피하기 위해 주기적 keepalive를 전송
-        keepalive_interval_seconds = 3
-        task = asyncio.create_task(
-            app_graph.ainvoke(initial_graph_state, config={"recursion_limit": 10})
-        )
+#         # 긴 작업 동안 프록시/워커 idle 타임아웃을 피하기 위해 주기적 keepalive를 전송
+#         keepalive_interval_seconds = 3
+#         task = asyncio.create_task(
+#             app_graph.ainvoke(initial_graph_state, config={"recursion_limit": 10})
+#         )
 
-        while not task.done():
-            # 진행 중 하트비트 전송
-            payload = ChatStreamResponse(
-                success=False,
-                response="답변 생성 중"
-            )
-            yield f"data: {payload.model_dump_json()}\n\n"
-            await asyncio.sleep(keepalive_interval_seconds)
+#         while not task.done():
+#             # 진행 중 하트비트 전송
+#             payload = ChatStreamResponse(
+#                 success=False,
+#                 response="답변 생성 중"
+#             )
+#             yield f"data: {payload.model_dump_json()}\n\n"
+#             await asyncio.sleep(keepalive_interval_seconds)
 
-        final_graph_state = await task
+#         final_graph_state = await task
 
-        # 필요한 경우 중간 단계별로 쪼개서 보내세요.
-        response_data = final_graph_state.get("final_response", {})
-        payload = ChatStreamResponse(
-            success=True,
-            response=response_data.get("message", "오류: 응답 메시지가 없습니다."),
-            state={
-                "intent": final_graph_state.get("intent"),
-                "next_action": final_graph_state.get("next_action"),
-                "template_pipeline_state": final_graph_state.get("template_pipeline_state", {})
-            },
-            options=response_data.get("options", []),
-            template=response_data.get("template", ""),
-            structured_template=response_data.get("structured_template"),
-            editable_variables=response_data.get("editable_variables", {}),
-            structured_templates=response_data.get("structured_templates", []),
-            hasImage=response_data.get("hasImage", False)
-        )
-        yield f"data: {payload.model_dump_json()}\n\n"
+#         # 필요한 경우 중간 단계별로 쪼개서 보내세요.
+#         response_data = final_graph_state.get("final_response", {})
+#         payload = ChatStreamResponse(
+#             success=True,
+#             response=response_data.get("message", "오류: 응답 메시지가 없습니다."),
+#             state={
+#                 "intent": final_graph_state.get("intent"),
+#                 "next_action": final_graph_state.get("next_action"),
+#                 "template_pipeline_state": final_graph_state.get("template_pipeline_state", {})
+#             },
+#             options=response_data.get("options", []),
+#             template=response_data.get("template", ""),
+#             structured_template=response_data.get("structured_template"),
+#             editable_variables=response_data.get("editable_variables", {}),
+#             structured_templates=response_data.get("structured_templates", []),
+#             hasImage=response_data.get("hasImage", False)
+#         )
+#         yield f"data: {payload.model_dump_json()}\n\n"
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+#     return StreamingResponse(gen(), media_type="text/event-stream")
 
 class ChatStreamResponse(BaseModel):
     success: bool
