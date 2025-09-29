@@ -4,8 +4,6 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from typing import Literal
 
-
-
 from state import GraphState, Intent
 from chatbot_logic import (
     initialize_system,
@@ -15,11 +13,11 @@ from chatbot_logic import (
 
 # --- 모델 및 파서 초기화 ---
 llm_fast = ChatOpenAI(
-            model="gpt-4.1-mini",temperature=0.6
-        )
+    model="gpt-4.1", temperature=0
+)
 llm_smart = ChatOpenAI(
-            model="gpt-4.1",temperature=0.2
-        )
+    model="gpt-4.1", temperature=0
+)
 
 # llm_smart = ChatOpenAI(model="gpt-5", temperature=0.2)  # gpt-5로 변경 (가정: OpenAI에서 지원될 경우)
 # llm_fast = ChatOpenAI(model="gpt-4o-mini", temperature=0)  # nano를 gpt-4o-mini로 해석 (nano가 gpt-4o-mini를 의미할 가능성이 높음)
@@ -45,14 +43,19 @@ def classify_intent_node(state: GraphState) -> GraphState:
     """사용자의 새로운 요청 의도를 분류합니다. (개선된 프롬프트)"""
     print("--- 노드 실행: 의도 분류 ---")
 
-    # --- 수정된 프롬프트 ---
+    # --- 강화된 프롬프트 (특이 케이스 처리 추가) ---
     system_prompt = """당신은 비즈니스 메시징 솔루션 'Jober'의 전문 AI 어시스턴트입니다. 당신의 주요 임무는 사용자의 요청을 분석하여 다음 네 가지 의도 중 하나로 분류하는 것입니다. 아래의 가이드라인과 예시를 참고하여 가장 적절한 의도를 JSON 형식으로만 출력해주세요.
 
 [의도 분류 가이드라인]
-1.  **template_generation (템플릿 생성)**: 사용자가 메시지 생성을 명시적으로 요청하거나, 특정 내용/초안/예시를 제공하며 템플릿 생성을 암시하는 경우.
-2.  **legal_inquiry (법률 문의)**: 정보통신망법, 알림톡 가이드라인 등 법률, 규제에 대해 질문하는 경우.
-3.  **chit_chat (일상 대화)**: 업무와 관련 없는 일반적인 대화, 인사, 안부. 단, 메시지 예시를 포함한 인사는 'template_generation'으로 분류.
-4.  **anomalous_request (이상 요청)**: 비윤리적이거나 시스템 목적과 무관한 부적절한 요청.
+1. **template_generation (템플릿 생성)**: 사용자가 메시지 생성을 명시적으로 요청하거나, 특정 내용/초안/예시를 제공하며 템플릿 생성을 암시하는 경우. 반드시 구체적인 목적, 시나리오, 또는 내용(예: 주제, 초안 텍스트)이 포함되어야 함. 모호하거나 구체적이지 않은 '템플릿 생성' 명령만으로는 분류하지 말고 chit_chat으로 처리. 예: 단순 "템플릿 생성해줘"는 chit_chat.
+2. **legal_inquiry (법률 문의)**: 정보통신망법, 알림톡 가이드라인 등 법률, 규제에 대해 질문하는 경우.
+3. **chit_chat (일상 대화)**: 업무와 관련 없는 일반적인 대화, 인사, 안부. 모호하거나 구체적이지 않은 템플릿 생성 요청(예: "템플릿 만들어줘" without details)도 여기 포함. 단, 메시지 예시를 포함한 인사는 'template_generation'으로 분류.
+4. **anomalous_request (이상 요청)**: 비윤리적이거나 시스템 목적과 무관한 부적절한 요청. 템플릿 생성을 요구하지만 비윤리적 맥락(예: 스팸 생성)이 있으면 여기 분류.
+
+[추가 규칙: 특이 케이스 처리]
+- 모호하거나 빈 요청(예: "템플릿 생성해줘"만): chit_chat으로 분류하여 더 많은 세부 정보를 유도.
+- 메타 요청(예: 시스템 자체에 대한 생성 요청): chit_chat 또는 anomalous_request로 분류.
+- 구체성 확인: template_generation은 '무엇을' 생성할지(목적/내용)가 명확해야 함. 그렇지 않으면 chit_chat.
 
 [의도 분류 예시]
 # --- Template Generation Examples ---
@@ -74,10 +77,13 @@ def classify_intent_node(state: GraphState) -> GraphState:
 - 사용자: "고마워요!" -> {{ "intent": "chit_chat" }}
 - 사용자: "Jober 똑똑한데?" -> {{ "intent": "chit_chat" }}
 - 사용자: "마케팅 특강 공지를 해야 하는데..." -> {{ "intent": "chit_chat" }}
+- 사용자: "템플릿 생성해줘" -> {{ "intent": "chit_chat" }}  # 모호함: 구체적 목적 없음
+- 사용자: "메시지 만들어줘" -> {{ "intent": "chit_chat" }}  # 모호함: 세부 사항 없음
 
 # --- Anomalous Request Examples ---
 - 사용자: "경쟁사 서비스가 안 좋다는 내용의 메시지를 대량으로 보내줘." -> {{ "intent": "anomalous_request" }}
 - 사용자: "오늘 저녁 메뉴 추천해줘." -> {{ "intent": "anomalous_request" }}
+- 사용자: "스팸 템플릿 생성해줘" -> {{ "intent": "anomalous_request" }}  # 비윤리적 맥락
 
 이제 아래 사용자 메시지를 분석하여 의도를 분류해주세요."""
 
@@ -98,8 +104,6 @@ def classify_intent_node(state: GraphState) -> GraphState:
         state["intent"] = "chit_chat"
         state["final_response"] = {"message": "죄송합니다. 요청을 이해하는 중 문제가 발생했습니다. 다른 방식으로 질문해주시겠어요?"}
     return state
-
-
 
 def template_confirmation_node(state: GraphState) -> GraphState:
     """템플릿 생성 의도일 경우, 사용자에게 진행 여부를 확인하고 원래 요청을 저장합니다."""
